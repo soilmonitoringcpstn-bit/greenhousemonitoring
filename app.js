@@ -29,6 +29,16 @@ const fields = {
 const connectionText = document.querySelector("#connectionText");
 const latestDetails = document.querySelector("#latestDetails");
 const lastUpdated = document.querySelector("#lastUpdated");
+const hiddenDetailKeys = new Set([
+  "actuator pump relay_pin",
+  "sensors dht22 error",
+  "sensors rain raw_value",
+  "sensors soil raw_value",
+  "system last_update_ms",
+  "system status",
+  "system wifi_rssi",
+  "system wifi_status",
+]);
 
 function formatValue(value, unit = "") {
   if (value === null || value === undefined || value === "") return "--";
@@ -91,6 +101,7 @@ function renderData(greenhouse) {
   });
 
   latestDetails.innerHTML = flattenDetails(greenhouse)
+    .filter(([key]) => !hiddenDetailKeys.has(key))
     .map(
       ([key, value]) => `
         <div>
