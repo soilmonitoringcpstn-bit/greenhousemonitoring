@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Smart solar driven automated greenhouse with cloud monitoring for sustainable tomato farming."
+    />
+    <title>Smart Solar Greenhouse</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Josefin+Sans:wght@400;600;700&family=Marcellus&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <p>Smart Solar Driven Automated Greenhouse With Cloud Monitoring For Sustainable Tomato Farming</p>
+      <span id="connectionText">Connecting</span>
+    </header>
+
+    <main class="dashboard" aria-labelledby="dashboardTitle">
+      <section class="hero">
+        <div class="sunburst" aria-hidden="true"></div>
+        <p class="eyebrow">Live Greenhouse Data</p>
+        <h1 id="dashboardTitle">Soil Monitoring</h1>
+      </section>
+
+      <section class="data-grid" aria-label="Current greenhouse readings">
+        <article class="data-card">
+          <span>Soil Moisture</span>
+          <strong id="soilMoistureValue">--</strong>
+        </article>
+        <article class="data-card">
+          <span>Temperature</span>
+          <strong id="temperatureValue">--</strong>
+        </article>
+        <article class="data-card">
+          <span>Humidity</span>
+          <strong id="humidityValue">--</strong>
+        </article>
+        <article class="data-card">
+          <span>Pump</span>
+          <strong id="pumpValue">--</strong>
+        </article>
+      </section>
+
+      <section class="details-card">
+        <h2>Latest Record</h2>
+        <dl id="latestDetails">
+          <div>
+            <dt>Database</dt>
+            <dd>Connecting to Firebase</dd>
+          </div>
+        </dl>
+      </section>
+    </main>
+
+    <footer id="lastUpdated">Last updated: --</footer>
+    <script src="app.js" defer></script>
+  </body>
+</html>
