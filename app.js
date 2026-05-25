@@ -2,9 +2,11 @@ const FIREBASE_URL =
   "https://soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app/.json";
 
 let latestData = null;
-let latestSignature = "";
-let lastDataChangedAt = 0;
 const STALE_AFTER_MS = 3 * 60 * 1000;
+const SIGNATURE_STORAGE_KEY = "greenhouseLatestSignature";
+const CHANGED_AT_STORAGE_KEY = "greenhouseLastDataChangedAt";
+let latestSignature = localStorage.getItem(SIGNATURE_STORAGE_KEY) || "";
+let lastDataChangedAt = Number(localStorage.getItem(CHANGED_AT_STORAGE_KEY)) || 0;
 
 const fields = {
   soilMoistureValue: {
@@ -140,7 +142,11 @@ function renderAndTrackData(data) {
   if (signature !== latestSignature) {
     latestSignature = signature;
     lastDataChangedAt = Date.now();
+    localStorage.setItem(SIGNATURE_STORAGE_KEY, latestSignature);
+    localStorage.setItem(CHANGED_AT_STORAGE_KEY, String(lastDataChangedAt));
     updateLastUpdated();
+  } else if (lastDataChangedAt) {
+    lastUpdated.textContent = `Last changed: ${new Date(lastDataChangedAt).toLocaleString()}`;
   }
 
   renderData(greenhouse);
