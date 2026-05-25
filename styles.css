@@ -70,44 +70,9 @@ footer {
 }
 
 .dashboard {
-  padding: clamp(1.5rem, 4vw, 3rem) 0;
+  padding: 1rem 0 clamp(1.5rem, 4vw, 3rem);
 }
 
-.hero {
-  position: relative;
-  overflow: hidden;
-  min-height: clamp(12rem, 34vw, 20rem);
-  display: grid;
-  place-items: center;
-  padding: 2rem 1rem;
-  border-inline: 1px solid rgba(212, 175, 55, 0.28);
-  text-align: center;
-  isolation: isolate;
-}
-
-.sunburst {
-  position: absolute;
-  left: 50%;
-  bottom: -8rem;
-  z-index: -1;
-  width: min(90vw, 520px);
-  aspect-ratio: 1;
-  transform: translateX(-50%);
-  background:
-    repeating-conic-gradient(from -8deg, rgba(212, 175, 55, 0.18) 0deg 4deg, transparent 4deg 12deg),
-    radial-gradient(circle, rgba(212, 175, 55, 0.17), transparent 62%);
-  clip-path: polygon(50% 0, 100% 100%, 0 100%);
-}
-
-.eyebrow {
-  margin: 0 0 0.6rem;
-  color: var(--gold);
-  font-weight: 700;
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
-}
-
-h1,
 h2 {
   margin: 0;
   font-family: var(--font-display);
@@ -117,15 +82,21 @@ h2 {
   text-transform: uppercase;
 }
 
-h1 {
-  font-size: clamp(2.5rem, 9vw, 6rem);
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
 }
 
 .data-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
-  margin-top: 1rem;
+  margin-top: 0;
 }
 
 .data-card,
@@ -225,7 +196,4 @@ footer {
     grid-template-columns: 1fr;
   }
 
-  h1 {
-    letter-spacing: 0.1em;
-  }
 }
