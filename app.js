@@ -4,10 +4,22 @@ const FIREBASE_URL =
 let latestData = null;
 
 const fields = {
-  soilMoistureValue: { key: "soil_moisture_percent", unit: "%" },
-  temperatureValue: { key: "temperature", unit: " deg C" },
-  humidityValue: { key: "humidity", unit: "%" },
-  pumpValue: { key: "pump_on", unit: "" },
+  soilMoistureValue: {
+    paths: ["sensors.soil.moisture_percent", "soil_moisture_percent"],
+    unit: "%",
+  },
+  temperatureValue: {
+    paths: ["sensors.dht22.temperature_celsius", "temperature"],
+    unit: " deg C",
+  },
+  humidityValue: {
+    paths: ["sensors.dht22.humidity_percent", "humidity"],
+    unit: "%",
+  },
+  pumpValue: {
+    paths: ["actuator.pump.is_on", "pump_on"],
+    unit: "",
+  },
 };
 
 const connectionText = document.querySelector("#connectionText");
@@ -39,17 +51,42 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function getByPath(source, path) {
+  return path.split(".").reduce((value, key) => {
+    if (value === null || value === undefined) return undefined;
+    return value[key];
+  }, source);
+}
+
+function getFirstValue(source, paths) {
+  for (const path of paths) {
+    const value = getByPath(source, path);
+    if (value !== undefined && value !== null) return value;
+  }
+  return undefined;
+}
+
+function flattenDetails(source, prefix = "") {
+  return Object.entries(source || {}).flatMap(([key, value]) => {
+    const label = prefix ? `${prefix} ${key}` : key;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return flattenDetails(value, label);
+    }
+    return [[label, value]];
+  });
+}
+
 function renderData(greenhouse) {
   if (!greenhouse || typeof greenhouse !== "object") return;
 
   Object.entries(fields).forEach(([elementId, config]) => {
     document.querySelector(`#${elementId}`).textContent = formatValue(
-      greenhouse[config.key],
+      getFirstValue(greenhouse, config.paths),
       config.unit
     );
   });
 
-  latestDetails.innerHTML = Object.entries(greenhouse)
+  latestDetails.innerHTML = flattenDetails(greenhouse)
     .map(
       ([key, value]) => `
         <div>
