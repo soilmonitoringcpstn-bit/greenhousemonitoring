@@ -2,6 +2,9 @@ const FIREBASE_URL =
   "https://soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app/.json";
 
 let latestData = null;
+let latestSignature = "";
+let lastDataChangedAt = 0;
+const STALE_AFTER_MS = 3 * 60 * 1000;
 
 const fields = {
   soilMoistureValue: {
@@ -121,19 +124,46 @@ function updateLastUpdated() {
   lastUpdated.textContent = `Last updated: ${new Date().toLocaleString()}`;
 }
 
+function getDataSignature(greenhouse) {
+  return JSON.stringify(greenhouse || {});
+}
+
+function setConnectionStatus(status) {
+  connectionText.textContent = status;
+}
+
+function renderAndTrackData(data) {
+  latestData = data;
+  const greenhouse = getGreenhouseData(latestData);
+  const signature = getDataSignature(greenhouse);
+
+  if (signature !== latestSignature) {
+    latestSignature = signature;
+    lastDataChangedAt = Date.now();
+    updateLastUpdated();
+  }
+
+  renderData(greenhouse);
+  setConnectionStatus(Date.now() - lastDataChangedAt > STALE_AFTER_MS ? "Offline" : "Live");
+}
+
+function checkForStaleData() {
+  if (!lastDataChangedAt) return;
+  if (Date.now() - lastDataChangedAt > STALE_AFTER_MS) {
+    setConnectionStatus("Offline");
+  }
+}
+
 async function loadData() {
   try {
-    connectionText.textContent = "Connecting";
+    setConnectionStatus("Connecting");
     const response = await fetch(FIREBASE_URL, { cache: "no-store" });
     if (!response.ok) throw new Error(`Firebase returned ${response.status}`);
 
     const data = await response.json();
-    latestData = data;
-    renderData(getGreenhouseData(latestData));
-    connectionText.textContent = "Live";
-    updateLastUpdated();
+    renderAndTrackData(data);
   } catch (error) {
-    connectionText.textContent = "Offline";
+    setConnectionStatus("Offline");
     latestDetails.innerHTML = `
       <div>
         <dt>Error</dt>
@@ -173,10 +203,7 @@ function setDataAtPath(target, path, value, isPatch = false) {
 
 function handleStreamMessage(event, isPatch = false) {
   const message = JSON.parse(event.data);
-  latestData = setDataAtPath(latestData, message.path, message.data, isPatch);
-  renderData(getGreenhouseData(latestData));
-  connectionText.textContent = "Live";
-  updateLastUpdated();
+  renderAndTrackData(setDataAtPath(latestData, message.path, message.data, isPatch));
 }
 
 function startRealtimeUpdates() {
@@ -186,18 +213,19 @@ function startRealtimeUpdates() {
     return;
   }
 
-  connectionText.textContent = "Connecting";
+  setConnectionStatus("Connecting");
   const stream = new EventSource(FIREBASE_URL);
 
   stream.addEventListener("put", (event) => handleStreamMessage(event));
   stream.addEventListener("patch", (event) => handleStreamMessage(event, true));
   stream.addEventListener("open", () => {
-    connectionText.textContent = "Live";
+    checkForStaleData();
   });
   stream.addEventListener("error", () => {
-    connectionText.textContent = "Reconnecting";
+    setConnectionStatus("Reconnecting");
   });
 
+  setInterval(checkForStaleData, 5000);
   setInterval(loadData, 300000);
 }
 
