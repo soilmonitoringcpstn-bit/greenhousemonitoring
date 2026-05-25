@@ -1,6 +1,8 @@
 const FIREBASE_URL =
   "https://soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app/.json";
 
+let latestData = null;
+
 const fields = {
   soilMoistureValue: { key: "soil_moisture_percent", unit: "%" },
   temperatureValue: { key: "temperature", unit: " deg C" },
@@ -38,6 +40,8 @@ function escapeHtml(value) {
 }
 
 function renderData(greenhouse) {
+  if (!greenhouse || typeof greenhouse !== "object") return;
+
   Object.entries(fields).forEach(([elementId, config]) => {
     document.querySelector(`#${elementId}`).textContent = formatValue(
       greenhouse[config.key],
@@ -57,6 +61,14 @@ function renderData(greenhouse) {
     .join("");
 }
 
+function getGreenhouseData(data) {
+  return data.greenhouse || data;
+}
+
+function updateLastUpdated() {
+  lastUpdated.textContent = `Last updated: ${new Date().toLocaleString()}`;
+}
+
 async function loadData() {
   try {
     connectionText.textContent = "Connecting";
@@ -64,10 +76,10 @@ async function loadData() {
     if (!response.ok) throw new Error(`Firebase returned ${response.status}`);
 
     const data = await response.json();
-    const greenhouse = data.greenhouse || data;
-    renderData(greenhouse);
+    latestData = data;
+    renderData(getGreenhouseData(latestData));
     connectionText.textContent = "Live";
-    lastUpdated.textContent = `Last updated: ${new Date().toLocaleString()}`;
+    updateLastUpdated();
   } catch (error) {
     connectionText.textContent = "Offline";
     latestDetails.innerHTML = `
@@ -79,5 +91,63 @@ async function loadData() {
   }
 }
 
+function setDataAtPath(target, path, value, isPatch = false) {
+  if (path === "/") {
+    if (isPatch && target && typeof target === "object") {
+      return { ...target, ...value };
+    }
+    return value;
+  }
+
+  const next = target && typeof target === "object" ? { ...target } : {};
+  const parts = path.split("/").filter(Boolean);
+  let cursor = next;
+
+  parts.forEach((part, index) => {
+    if (index === parts.length - 1) {
+      cursor[part] =
+        isPatch && cursor[part] && typeof cursor[part] === "object"
+          ? { ...cursor[part], ...value }
+          : value;
+      return;
+    }
+
+    cursor[part] = cursor[part] && typeof cursor[part] === "object" ? { ...cursor[part] } : {};
+    cursor = cursor[part];
+  });
+
+  return next;
+}
+
+function handleStreamMessage(event, isPatch = false) {
+  const message = JSON.parse(event.data);
+  latestData = setDataAtPath(latestData, message.path, message.data, isPatch);
+  renderData(getGreenhouseData(latestData));
+  connectionText.textContent = "Live";
+  updateLastUpdated();
+}
+
+function startRealtimeUpdates() {
+  if (!window.EventSource) {
+    loadData();
+    setInterval(loadData, 30000);
+    return;
+  }
+
+  connectionText.textContent = "Connecting";
+  const stream = new EventSource(FIREBASE_URL);
+
+  stream.addEventListener("put", (event) => handleStreamMessage(event));
+  stream.addEventListener("patch", (event) => handleStreamMessage(event, true));
+  stream.addEventListener("open", () => {
+    connectionText.textContent = "Live";
+  });
+  stream.addEventListener("error", () => {
+    connectionText.textContent = "Reconnecting";
+  });
+
+  setInterval(loadData, 300000);
+}
+
 loadData();
-setInterval(loadData, 30000);
+startRealtimeUpdates();
