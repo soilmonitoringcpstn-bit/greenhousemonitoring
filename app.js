@@ -20,6 +20,10 @@ const fields = {
     paths: ["actuator.pump.is_on", "pump_on"],
     unit: "",
   },
+  rainValue: {
+    paths: ["sensors.rain.status", "sensors.rain.detected", "rain_status", "rain_detected"],
+    unit: "",
+  },
 };
 
 const connectionText = document.querySelector("#connectionText");
