@@ -1,5 +1,5 @@
 const FIREBASE_URL =
-  "https://soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app/.json";
+  "https://soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app/greenhouse.json";
 
 let latestData = null;
 const STALE_AFTER_MS = 3 * 60 * 1000;
