@@ -35,11 +35,101 @@ body {
     linear-gradient(180deg, #f8fafc 0%, #ecfdf5 52%, #f8fafc 100%);
 }
 
+.login-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.login-card {
+  width: min(100%, 430px);
+  padding: clamp(1.25rem, 4vw, 2rem);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+
+.login-card h1 {
+  margin-bottom: 0.5rem;
+}
+
+.login-copy,
+.login-hint {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.login-card label {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 1rem;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.login-card input {
+  width: 100%;
+  min-height: 2.9rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.75rem 0.9rem;
+  color: var(--text);
+  background: #f8fafc;
+  font: inherit;
+}
+
+.login-card input:focus {
+  outline: 3px solid rgba(16, 185, 129, 0.2);
+  border-color: var(--green);
+}
+
+.login-card button,
+.logout-button {
+  border: 0;
+  border-radius: 999px;
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--green), var(--green-dark));
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.login-card button {
+  width: 100%;
+  min-height: 3rem;
+  margin-top: 1rem;
+}
+
+.login-error {
+  min-height: 1.3rem;
+  margin: 0.8rem 0 0;
+  color: var(--danger);
+  font-weight: 800;
+}
+
 .app-header,
 .dashboard,
 .site-footer {
   width: min(100% - 2rem, 1180px);
   margin-inline: auto;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.logout-button {
+  min-height: 2.4rem;
+  padding: 0.5rem 0.85rem;
+  background: #0f172a;
+  font-size: 0.78rem;
 }
 
 .app-header {
@@ -297,6 +387,14 @@ dd {
   }
 
   .status-badge {
+    width: 100%;
+  }
+
+  .header-actions {
+    width: 100%;
+  }
+
+  .logout-button {
     width: 100%;
   }
 

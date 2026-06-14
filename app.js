@@ -4,12 +4,23 @@ const FIREBASE_URL =
 const STALE_AFTER_MS = 3 * 60 * 1000;
 const SIGNATURE_STORAGE_KEY = "greenhouseLatestSignature";
 const CHANGED_AT_STORAGE_KEY = "greenhouseLastDataChangedAt";
+const AUTH_STORAGE_KEY = "greenhouseDashboardLoggedIn";
+const LOGIN_USERNAME = "admin";
+const LOGIN_PASSWORD = "greenhouse";
 
 let latestData = null;
 let latestSignature = localStorage.getItem(SIGNATURE_STORAGE_KEY) || "";
 let lastDataChangedAt = Number(localStorage.getItem(CHANGED_AT_STORAGE_KEY)) || 0;
+let realtimeStarted = false;
 
 const elements = {
+  loginScreen: document.querySelector("#loginScreen"),
+  loginForm: document.querySelector("#loginForm"),
+  usernameInput: document.querySelector("#usernameInput"),
+  passwordInput: document.querySelector("#passwordInput"),
+  loginError: document.querySelector("#loginError"),
+  appShell: document.querySelector("#appShell"),
+  logoutButton: document.querySelector("#logoutButton"),
   connectionText: document.querySelector("#connectionText"),
   soilPercent: document.querySelector("#soilPercent"),
   soilRaw: document.querySelector("#soilRaw"),
@@ -251,6 +262,9 @@ function checkForStaleData() {
 }
 
 function startRealtimeUpdates() {
+  if (realtimeStarted) return;
+  realtimeStarted = true;
+
   if (!window.EventSource) {
     loadData();
     setInterval(loadData, 30000);
@@ -266,5 +280,42 @@ function startRealtimeUpdates() {
   setInterval(loadData, 300000);
 }
 
-loadData();
-startRealtimeUpdates();
+function showDashboard() {
+  elements.loginScreen.hidden = true;
+  elements.appShell.hidden = false;
+  loadData();
+  startRealtimeUpdates();
+}
+
+function showLogin() {
+  elements.loginScreen.hidden = false;
+  elements.appShell.hidden = true;
+  elements.passwordInput.value = "";
+  elements.usernameInput.focus();
+}
+
+elements.loginForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const username = elements.usernameInput.value.trim();
+  const password = elements.passwordInput.value;
+
+  if (username === LOGIN_USERNAME && password === LOGIN_PASSWORD) {
+    sessionStorage.setItem(AUTH_STORAGE_KEY, "true");
+    elements.loginError.textContent = "";
+    showDashboard();
+    return;
+  }
+
+  elements.loginError.textContent = "Invalid username or password.";
+});
+
+elements.logoutButton.addEventListener("click", () => {
+  sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  showLogin();
+});
+
+if (sessionStorage.getItem(AUTH_STORAGE_KEY) === "true") {
+  showDashboard();
+} else {
+  showLogin();
+}
