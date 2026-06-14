@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Smart solar-driven automated greenhouse monitoring dashboard with cloud analytics."
+      content="ESP32 smart greenhouse monitoring dashboard for Firebase sensor data."
     />
-    <title>Greenhouse Monitoring Dashboard</title>
+    <title>Smart Greenhouse Monitoring</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -17,191 +17,146 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header class="hero-shell">
+    <header class="app-header">
       <div>
-        <p class="eyebrow">Smart Agriculture IoT Platform</p>
-        <h1>Greenhouse Monitoring Dashboard</h1>
-        <p class="subtitle">
-          Smart Solar-Driven Automated Greenhouse with Cloud Monitoring for
-          Sustainable Tomato Farming
-        </p>
+        <p class="eyebrow">ESP32 Smart Greenhouse System</p>
+        <h1>Smart Solar Driven Automated Greenhouse With Cloud Monitoring For Sustainable Tomato Farming</h1>
       </div>
-      <div class="status-cluster" aria-label="System status summary">
-        <span id="connectionText" class="status-badge neutral">Connecting</span>
-        <span id="wifiStatus" class="status-badge neutral">WiFi --</span>
-        <span id="firebaseStatus" class="status-badge neutral">Firebase --</span>
-        <span id="espStatus" class="status-badge neutral">ESP32 --</span>
-        <span id="lastReceived" class="timestamp-pill">Last data: --</span>
-      </div>
+      <span id="connectionText" class="status-badge neutral">Connecting</span>
     </header>
 
-    <main class="dashboard" aria-labelledby="dashboardTitle">
-      <h2 id="dashboardTitle" class="visually-hidden">Greenhouse monitoring data</h2>
-
-      <section class="summary-grid" aria-label="Realtime greenhouse metrics">
-        <article class="metric-card soil-card">
-          <div class="card-heading">
-            <span class="metric-icon">🌿</span>
+    <main class="dashboard" aria-label="Greenhouse monitoring dashboard">
+      <section class="cards-grid" aria-label="Main sensor readings">
+        <article class="metric-card">
+          <div class="card-top">
+            <span class="icon-badge">SM</span>
             <span>Soil Moisture</span>
           </div>
-          <div class="metric-row">
-            <div id="soilGauge" class="circle-gauge" style="--value: 0">
-              <span id="soilMoistureValue">--</span>
+          <strong id="soilPercent">--</strong>
+          <dl class="card-details">
+            <div>
+              <dt>Raw value</dt>
+              <dd id="soilRaw">--</dd>
             </div>
             <div>
-              <strong id="soilCondition">Waiting</strong>
-              <p>Moisture condition</p>
+              <dt>Status</dt>
+              <dd id="soilStatus">--</dd>
             </div>
-          </div>
+          </dl>
         </article>
 
         <article class="metric-card">
-          <div class="card-heading">
-            <span class="metric-icon">🌡️</span>
+          <div class="card-top">
+            <span class="icon-badge">TC</span>
             <span>Temperature</span>
           </div>
-          <strong id="temperatureValue" class="metric-value">--</strong>
-          <div class="mini-stats">
-            <span>High <b id="tempHigh">--</b></span>
-            <span>Low <b id="tempLow">--</b></span>
-          </div>
+          <strong id="temperatureValue">--</strong>
+          <dl class="card-details">
+            <div>
+              <dt>DHT22</dt>
+              <dd id="temperatureError">--</dd>
+            </div>
+          </dl>
         </article>
 
         <article class="metric-card">
-          <div class="card-heading">
-            <span class="metric-icon">💧</span>
+          <div class="card-top">
+            <span class="icon-badge">RH</span>
             <span>Humidity</span>
           </div>
-          <strong id="humidityValue" class="metric-value">--</strong>
-          <p id="humidityTrend" class="trend-label">Trend unavailable</p>
+          <strong id="humidityValue">--</strong>
+          <dl class="card-details">
+            <div>
+              <dt>DHT22</dt>
+              <dd id="humidityError">--</dd>
+            </div>
+          </dl>
         </article>
 
         <article class="metric-card">
-          <div class="card-heading">
-            <span class="metric-icon">🌧️</span>
-            <span>Rain Status</span>
+          <div class="card-top">
+            <span class="icon-badge">WP</span>
+            <span>Pump</span>
           </div>
-          <strong id="rainValue" class="metric-value">--</strong>
-          <p>Last event: <b id="lastRainEvent">--</b></p>
+          <strong id="pumpValue">--</strong>
+          <dl class="card-details">
+            <div>
+              <dt>Monitoring</dt>
+              <dd>Status only</dd>
+            </div>
+          </dl>
         </article>
 
         <article class="metric-card">
-          <div class="card-heading">
-            <span class="metric-icon">⚙️</span>
-            <span>Pump Status</span>
+          <div class="card-top">
+            <span class="icon-badge">RN</span>
+            <span>Rain</span>
           </div>
-          <strong id="pumpValue" class="metric-value">--</strong>
-          <div class="mini-stats">
-            <span>Last active <b id="pumpLastActive">--</b></span>
-            <span>Today <b id="pumpActivations">0</b></span>
-          </div>
-        </article>
-      </section>
-
-      <section class="dashboard-grid">
-        <article class="panel health-panel">
-          <div class="panel-header">
+          <strong id="rainValue">--</strong>
+          <dl class="card-details">
             <div>
-              <p class="section-kicker">Environmental Health</p>
-              <h2>Growing Condition Score</h2>
-            </div>
-          </div>
-          <div class="health-content">
-            <div id="healthGauge" class="radial-gauge" style="--score: 0">
-              <span id="healthScore">--</span>
-            </div>
-            <div>
-              <strong id="healthLabel">Awaiting data</strong>
-              <p id="healthDescription">Live environmental scoring will appear after data is received.</p>
-            </div>
-          </div>
-        </article>
-
-        <article class="panel system-panel">
-          <div class="panel-header">
-            <div>
-              <p class="section-kicker">System Health</p>
-              <h2>Device & Cloud Status</h2>
-            </div>
-          </div>
-          <div id="systemHealthList" class="health-list"></div>
-        </article>
-      </section>
-
-      <section class="analytics-section" aria-label="Historical analytics">
-        <div class="section-title">
-          <p class="section-kicker">Analytics</p>
-          <h2>Last 24 Hours</h2>
-        </div>
-        <div class="chart-grid">
-          <article class="panel chart-card">
-            <h3>Soil Moisture Trend</h3>
-            <div id="soilChart" class="chart-box"></div>
-          </article>
-          <article class="panel chart-card">
-            <h3>Temperature & Humidity Trend</h3>
-            <div id="climateChart" class="chart-box"></div>
-          </article>
-          <article class="panel chart-card">
-            <h3>Rain Events Timeline</h3>
-            <div id="rainTimeline" class="timeline-box"></div>
-          </article>
-          <article class="panel chart-card">
-            <h3>Pump Activity Monitoring</h3>
-            <div id="pumpTimeline" class="timeline-box"></div>
-          </article>
-        </div>
-      </section>
-
-      <section class="bottom-grid">
-        <article class="panel">
-          <div class="panel-header">
-            <div>
-              <p class="section-kicker">Latest Records</p>
-              <h2>Activity Feed</h2>
-            </div>
-          </div>
-          <div id="activityFeed" class="activity-feed"></div>
-        </article>
-
-        <article class="panel error-panel">
-          <div class="panel-header">
-            <div>
-              <p class="section-kicker">Error Monitoring</p>
-              <h2>Latest Error Report</h2>
-            </div>
-          </div>
-          <dl class="error-grid">
-            <div>
-              <dt>Latest Error</dt>
-              <dd id="latestError">None detected</dd>
-            </div>
-            <div>
-              <dt>Error Code</dt>
-              <dd id="errorCode">--</dd>
-            </div>
-            <div>
-              <dt>Severity</dt>
-              <dd id="errorSeverity">Normal</dd>
-            </div>
-            <div>
-              <dt>Timestamp</dt>
-              <dd id="errorTimestamp">--</dd>
-            </div>
-            <div>
-              <dt>Error Count Today</dt>
-              <dd id="errorCount">0</dd>
+              <dt>Raw value</dt>
+              <dd id="rainRaw">--</dd>
             </div>
           </dl>
         </article>
       </section>
+
+      <section class="content-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <p class="eyebrow">System</p>
+            <h2>System Status</h2>
+          </div>
+          <dl class="system-grid">
+            <div>
+              <dt>System status</dt>
+              <dd id="systemStatus">--</dd>
+            </div>
+            <div>
+              <dt>WiFi status</dt>
+              <dd id="wifiStatus">--</dd>
+            </div>
+            <div>
+              <dt>WiFi RSSI</dt>
+              <dd id="wifiRssi">--</dd>
+            </div>
+            <div>
+              <dt>Firebase status</dt>
+              <dd id="firebaseStatus">Checking</dd>
+            </div>
+            <div>
+              <dt>Last update</dt>
+              <dd id="lastUpdate">--</dd>
+            </div>
+          </dl>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <p class="eyebrow">Firebase</p>
+            <h2>Latest Record</h2>
+          </div>
+          <dl id="latestRecord" class="record-grid">
+            <div>
+              <dt>Database</dt>
+              <dd>Connecting to Firebase</dd>
+            </div>
+          </dl>
+        </article>
+      </section>
+
+      <section id="errorPanel" class="panel error-panel" hidden>
+        <div class="panel-heading">
+          <p class="eyebrow">Error</p>
+          <h2>Firebase Error</h2>
+        </div>
+        <p id="errorMessage">--</p>
+      </section>
     </main>
 
     <footer class="site-footer">
-      <span>Firmware <b id="firmwareVersion">N/A</b></span>
-      <span>Database <b id="databaseStatus">Checking</b></span>
-      <span>Last Sync <b id="lastUpdated">--</b></span>
-      <span>Uptime <b id="systemUptime">--</b></span>
+      <span>Last synchronization: <b id="lastSync">--</b></span>
     </footer>
 
     <script src="app.js" defer></script>
