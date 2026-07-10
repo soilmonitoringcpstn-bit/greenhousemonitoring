@@ -51,9 +51,8 @@ DHT dht(DHTPIN, DHTTYPE);
 // ===== SOIL CALIBRATION =====
 // Higher raw value = drier soil
 // Lower raw value = wetter soil
-// Wider range to avoid sudden percentage drop
-int soilDryValue = 1600;
-int soilWetValue = 500;
+int soilDryValue = 4095;
+int soilWetValue = 1200;
 
 // ===== RAIN CALIBRATION =====
 // Below this value = rain detected
