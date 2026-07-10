@@ -4,6 +4,7 @@
 #include <DHT.h>
 #include <WebServer.h>
 #include <DNSServer.h>
+#include "time.h"
 
 WebServer server(80);
 DNSServer dnsServer;
@@ -64,6 +65,17 @@ int pumpOnThreshold = 15;    // Pump ON only below 15%
 int pumpOffThreshold = 55;   // Pump OFF at 55% and above
 
 bool pumpState = false;
+
+// ===== NTP TIME SETTINGS =====
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = 8 * 3600; // UTC+8
+const int   daylightOffset_sec = 0;
+
+// ===== AUTO RUN LIMIT & COOLDOWN =====
+unsigned long pumpOnTime = 0;
+unsigned long lastAutoRunTime = 0;
+const unsigned long maxRunTime = 120000;       // 2 minutes in ms
+const unsigned long cooldownTime = 18000000;   // 5 hours in ms
 
 // ===== DRY DELAY PROTECTION =====
 // Soil must stay dry for 10 seconds before pump turns ON
@@ -204,6 +216,10 @@ void setup() {
 
   connectWiFi();
 
+  // Configure NTP
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  Serial.println("Time configured via NTP.");
+
   server.on("/", handleRoot);
   server.on("/data", handleData);
   server.on("/set", handleSet);
@@ -243,6 +259,15 @@ void loop() {
   currentRainDetected = rainDetected;
   currentDhtError = dhtError;
 
+  // ===== TIME SCHEDULING LOGIC =====
+  struct tm timeinfo;
+  bool isScheduledTime = false;
+  if (getLocalTime(&timeinfo, 10)) { // 10ms non-blocking
+    if ((timeinfo.tm_hour == 6 || timeinfo.tm_hour == 18) && timeinfo.tm_min < 2) {
+      isScheduledTime = true;
+    }
+  }
+
   // ===== PUMP LOGIC =====
   if (manualMode) {
     if (pumpState != manualPumpState) {
@@ -251,30 +276,50 @@ void loop() {
       Serial.println(pumpState ? "ON" : "OFF");
     }
     dryStartTime = 0;
+    pumpOnTime = 0;
+  } else if (isScheduledTime) {
+    // Scheduled 6 AM/PM override (runs for 2 minutes)
+    if (!pumpState) {
+      pumpState = true;
+      Serial.println("Scheduled Time (6 AM/PM). Pump forced ON.");
+    }
+    dryStartTime = 0;
+    pumpOnTime = 0;
   } else {
-    // ===== PUMP LOGIC WITH DELAY + HYSTERESIS =====
-    // If soil is below 15% and no rain, start counting
-    if (soilPercent < pumpOnThreshold && !rainDetected) {
-      if (dryStartTime == 0) {
-        dryStartTime = millis();
-        Serial.println("Soil below 15%. Dry timer started...");
-      }
-
-      // Pump ON only if soil stays dry for 10 seconds
-      if (!pumpState && millis() - dryStartTime >= dryDelay) {
-        pumpState = true;
-        Serial.println("Soil stayed dry for 10 seconds. Pump ON.");
+    // ===== AUTO MODE (WITH COOLDOWN & 2-MIN LIMIT) =====
+    bool coolingDown = (millis() - lastAutoRunTime) < cooldownTime;
+    
+    if (pumpState) {
+      // Pump is currently ON in Auto Mode
+      if ((millis() - pumpOnTime) >= maxRunTime) {
+        // Run limit reached (2 minutes)
+        pumpState = false;
+        lastAutoRunTime = millis(); // Start 5-hour cooldown
+        Serial.println("Auto Mode: 2-minute limit reached. Pump OFF. Cooldown started.");
+      } else if (rainDetected) {
+        // Stop immediately if it rains
+        pumpState = false;
+        lastAutoRunTime = millis();
+        Serial.println("Auto Mode: Rain detected. Pump OFF. Cooldown started.");
       }
     } else {
-      // Reset timer if soil is not dry anymore
-      dryStartTime = 0;
-    }
-
-    // Pump OFF when soil reaches 55% or rain is detected
-    if (pumpState && (soilPercent >= pumpOffThreshold || rainDetected)) {
-      pumpState = false;
-      dryStartTime = 0;
-      Serial.println("Pump OFF: Soil is moist enough or rain detected.");
+      // Pump is currently OFF
+      if (soilPercent < pumpOnThreshold && !rainDetected && !coolingDown) {
+        if (dryStartTime == 0) {
+          dryStartTime = millis();
+          Serial.println("Soil dry & cooldown finished. Dry timer started...");
+        }
+        
+        // Wait 10 seconds before triggering
+        if (millis() - dryStartTime >= dryDelay) {
+          pumpState = true;
+          pumpOnTime = millis(); // Record start time for 2-min limit
+          Serial.println("Soil stayed dry. Pump ON for 2 minutes.");
+          dryStartTime = 0;
+        }
+      } else {
+        dryStartTime = 0;
+      }
     }
   }
 
