@@ -92,13 +92,20 @@ unsigned long sendInterval = 10000; // send every 10 seconds
 
 void handleRoot() {
   String html = "<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
-  html += "<title>ESP32 Greenhouse Monitor</title>";
-  html += "<style>body{font-family:Arial,sans-serif; margin:20px; background:#f4f7f6; color:#333;}";
-  html += "h2{color:#2e7d32; text-align:center;}";
-  html += ".card{background:#fff; border:1px solid #ddd; padding:15px; margin-bottom:10px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.05);}";
-  html += ".val{font-weight:bold; color:#1565c0; float:right;}";
-  html += ".btn{display:inline-block; padding:10px 15px; margin:5px; border-radius:5px; border:none; color:white; cursor:pointer; font-weight:bold;}";
-  html += ".btn-auto{background:#1565c0;} .btn-on{background:#2e7d32;} .btn-off{background:#d32f2f;}";
+  html += "<title>Smart Greenhouse Settings</title>";
+  html += "<style>";
+  html += "body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background: linear-gradient(135deg, #e0f2f1, #b2dfdb); color: #263238; min-height: 100vh; }";
+  html += "h2 { color: #004d40; text-align: center; margin-bottom: 30px; font-weight: 800; letter-spacing: 0.5px; }";
+  html += "h3 { color: #00695c; margin-top: 30px; font-weight: 700; border-bottom: 2px solid #b2dfdb; padding-bottom: 5px; }";
+  html += ".card { background: rgba(255, 255, 255, 0.85); border: 1px solid rgba(255,255,255,0.4); padding: 18px; margin-bottom: 12px; border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.05); backdrop-filter: blur(10px); display: flex; justify-content: space-between; align-items: center; }";
+  html += ".val { font-weight: 700; color: #00796b; font-size: 1.1em; }";
+  html += ".btn { flex: 1; padding: 14px; margin: 5px; border-radius: 12px; border: none; color: white; cursor: pointer; font-weight: bold; font-size: 14px; transition: transform 0.2s, box-shadow 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }";
+  html += ".btn:active { transform: translateY(2px); }";
+  html += ".btn-auto { background: linear-gradient(135deg, #1976d2, #1565c0); }";
+  html += ".btn-on { background: linear-gradient(135deg, #388e3c, #2e7d32); }";
+  html += ".btn-off { background: linear-gradient(135deg, #d32f2f, #c62828); }";
+  html += ".btn-group { display: flex; justify-content: space-between; gap: 10px; }";
+  html += "input[type='number'] { padding: 8px; border: 2px solid #b2dfdb; border-radius: 8px; width: 70px; font-weight: bold; color: #004d40; outline: none; }";
   html += "</style></head><body>";
   html += "<h2>Greenhouse Monitor</h2>";
   html += "<div class=\"card\"><strong>Temperature:</strong> <span class=\"val\" id=\"temp\">--</span></div>";
@@ -109,14 +116,16 @@ void handleRoot() {
   html += "<div class=\"card\"><strong>System Mode:</strong> <span class=\"val\" id=\"mode\">--</span></div>";
   
   html += "<h3>Pump Control</h3>";
-  html += "<button class=\"btn btn-auto\" onclick=\"setMode('auto','')\">Auto Mode</button>";
-  html += "<button class=\"btn btn-on\" onclick=\"setMode('manual','on')\">Manual ON</button>";
-  html += "<button class=\"btn btn-off\" onclick=\"setMode('manual','off')\">Manual OFF</button>";
+  html += "<div class=\"btn-group\">";
+  html += "<button class=\"btn btn-auto\" onclick=\"setMode('auto','')\">🤖 Auto</button>";
+  html += "<button class=\"btn btn-on\" onclick=\"setMode('manual','on')\">💧 ON</button>";
+  html += "<button class=\"btn btn-off\" onclick=\"setMode('manual','off')\">🛑 OFF</button>";
+  html += "</div>";
   html += "<h3>Auto Thresholds</h3>";
-  html += "<div class=\"card\">";
-  html += "<label>Turn ON below (%): <input type=\"number\" id=\"inpOn\" style=\"width:60px\"></label><br><br>";
-  html += "<label>Turn OFF above (%): <input type=\"number\" id=\"inpOff\" style=\"width:60px\"></label><br><br>";
-  html += "<button class=\"btn btn-auto\" onclick=\"setThresh()\">Update Thresholds</button>";
+  html += "<div class=\"card\" style=\"flex-direction:column; gap:10px; align-items:flex-start;\">";
+  html += "<div><label>Turn ON below (%): </label><input type=\"number\" id=\"inpOn\"></div>";
+  html += "<div><label>Turn OFF above (%): </label><input type=\"number\" id=\"inpOff\"></div>";
+  html += "<button class=\"btn btn-auto\" style=\"width:100%; margin-top:10px;\" onclick=\"setThresh()\">Update Thresholds</button>";
   html += "</div>";
 
   html += "<script>";
