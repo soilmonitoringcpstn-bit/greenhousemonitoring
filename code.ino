@@ -516,6 +516,7 @@ void sendToFirebase(float temperature, float humidity, bool dhtError,
   }
 
   http.end();
+  client.stop(); // Stop the previous connection completely before starting a new one
   
   // FETCH REMOTE COMMANDS
   String controlURL = firebaseURL;
