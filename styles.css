@@ -684,3 +684,39 @@ dd {
   }
 }
 
+
+/* ===== OFFLINE DETECTION ===== */
+.offline-banner {
+  display: none;
+  background: linear-gradient(135deg, #ef4444, #b91c1c);
+  color: white;
+  text-align: center;
+  padding: 12px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  font-size: 1.1rem;
+  box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);
+  z-index: 100;
+  border-radius: 0 0 20px 20px;
+  margin-top: -2rem;
+  margin-bottom: 2rem;
+  animation: pulseOffline 2s infinite;
+}
+
+body.system-offline .offline-banner {
+  display: block;
+}
+
+body.system-offline .metric-card,
+body.system-offline .panel {
+  opacity: 0.5;
+  filter: grayscale(80%);
+  pointer-events: none;
+}
+
+@keyframes pulseOffline {
+  0% { opacity: 1; }
+  50% { opacity: 0.8; }
+  100% { opacity: 1; }
+}
+

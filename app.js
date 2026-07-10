@@ -136,6 +136,7 @@ function getReadings(data) {
     wifiStatus: getFirstValue(data, ["system.wifi_status", "wifi_status"]),
     wifiRssi: getFirstValue(data, ["system.wifi_rssi", "wifi_rssi"]),
     lastUpdate: getFirstValue(data, ["system.last_update_ms", "last_update_ms"]),
+    lastUpdateUnix: getFirstValue(data, ["system.last_update_unix", "last_update_unix"]),
   };
 }
 
@@ -155,6 +156,7 @@ function renderLatestRecord(data) {
 function renderDashboard(data) {
   if (!data || typeof data !== "object") return;
   latestData = data;
+  updateOfflineStatus(data);
 
   const signature = getDataSignature(data);
   if (signature !== latestSignature) {
@@ -393,3 +395,27 @@ document.getElementById("remoteOffBtn")?.addEventListener("click", () => {
   setActiveRemoteBtn("remoteOffBtn");
   sendRemoteCommand("manual", false);
 });
+
+// ===== OFFLINE DETECTION =====
+let latestUnixTimestamp = 0;
+
+function updateOfflineStatus(data) {
+  if (data && data.system && data.system.last_update_unix) {
+    latestUnixTimestamp = data.system.last_update_unix;
+  }
+}
+
+setInterval(() => {
+  if (latestUnixTimestamp === 0) return; // Wait until first payload arrives
+
+  // Date.now() is in ms. Firebase timestamp from ESP32 time(nullptr) is in seconds.
+  const currentUnix = Math.floor(Date.now() / 1000);
+  const diffSeconds = currentUnix - latestUnixTimestamp;
+
+  if (diffSeconds > 30) {
+    document.body.classList.add('system-offline');
+  } else {
+    document.body.classList.remove('system-offline');
+  }
+}, 5000); // Check every 5 seconds
+

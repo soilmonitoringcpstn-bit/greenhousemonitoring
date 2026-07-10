@@ -546,7 +546,7 @@ void sendToFirebase(float temperature, float humidity, bool dhtError,
   jsonData += "\"status\":\"online\",";
   jsonData += "\"wifi_status\":\"" + wifiStatus + "\",";
   jsonData += "\"wifi_rssi\":" + String(WiFi.RSSI()) + ",";
-  jsonData += "\"last_update_ms\":" + String(millis());
+  jsonData += "\"last_update_unix\":" + String(time(nullptr));
   jsonData += "}";
 
   jsonData += "}";
