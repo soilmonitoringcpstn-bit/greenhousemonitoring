@@ -1,17 +1,17 @@
 :root {
   --green: #10b981;
-  --green-dark: #065f46;
+  --green-dark: #047857;
   --green-soft: #d1fae5;
-  --teal: #14b8a6;
-  --bg: #f8fafc;
+  --teal: #0d9488;
+  --bg: #f1f5f9;
   --card: #ffffff;
   --text: #0f172a;
-  --muted: #64748b;
-  --line: rgba(15, 23, 42, 0.09);
-  --success: #22c55e;
+  --muted: #475569;
+  --line: rgba(15, 23, 42, 0.06);
+  --success: #10b981;
   --warning: #f59e0b;
   --danger: #ef4444;
-  --shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+  --shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.05);
   --font-body: "Inter", Arial, sans-serif;
   --font-title: "Poppins", "Inter", Arial, sans-serif;
 }
@@ -34,9 +34,11 @@ body {
   margin: 0;
   color: var(--text);
   font-family: var(--font-body);
-  background:
-    radial-gradient(circle at top left, rgba(16, 185, 129, 0.18), transparent 25rem),
-    linear-gradient(180deg, #f8fafc 0%, #ecfdf5 52%, #f8fafc 100%);
+  background: 
+    radial-gradient(circle at 15% 50%, rgba(16, 185, 129, 0.12), transparent 25rem),
+    radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.12), transparent 25rem),
+    linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);
+  background-attachment: fixed;
 }
 
 .login-screen {
@@ -234,11 +236,18 @@ h1 {
 
 .metric-card,
 .panel {
-  border: 1px solid rgba(255, 255, 255, 0.8);
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: var(--shadow), inset 0 0 0 1px rgba(255,255,255,0.8);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease;
+}
+
+.metric-card:hover, .panel:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15), inset 0 0 0 1px rgba(255,255,255,1);
 }
 
 .metric-card {
@@ -413,3 +422,265 @@ dd {
     border-radius: 18px;
   }
 }
+
+/* ===== VISUAL ANIMATION CONTAINERS ===== */
+.visual-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 1.5rem 0;
+  position: relative;
+  min-height: 100px;
+}
+
+.value-overlay {
+  font-weight: 800;
+  font-size: 1.4rem;
+  color: var(--text);
+  z-index: 10;
+  text-shadow: 0 0 10px rgba(255,255,255,0.9), 0 0 5px rgba(255,255,255,0.8);
+}
+
+/* 1. Soil Moisture Pot */
+.pot-container {
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.plant-svg {
+  font-size: 3rem;
+  line-height: 1;
+  margin-bottom: -15px;
+  z-index: 2;
+  animation: sway 4s ease-in-out infinite;
+}
+.pot {
+  width: 90px;
+  height: 80px;
+  border: 4px solid var(--green-dark);
+  border-top: none;
+  border-radius: 0 0 25px 25px;
+  position: relative;
+  overflow: hidden;
+  background: rgba(255,255,255,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 -5px 15px rgba(0,0,0,0.1);
+}
+.water-level {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: var(--soil-level, 0%);
+  background: linear-gradient(180deg, #3b82f6 0%, #1e3a8a 100%);
+  transition: height 1.5s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 0;
+  opacity: 0.8;
+}
+
+/* 2. Thermometer */
+.thermometer-container {
+  gap: 1.5rem;
+}
+.thermometer {
+  width: 24px;
+  height: 100px;
+  background: #e2e8f0;
+  border-radius: 20px;
+  position: relative;
+  border: 3px solid #cbd5e1;
+  box-shadow: inset 0 2px 5px rgba(0,0,0,0.1);
+}
+.thermometer::after {
+  content: '';
+  position: absolute;
+  bottom: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 40px;
+  background: var(--temp-color, #3b82f6);
+  border-radius: 50%;
+  border: 3px solid #cbd5e1;
+  z-index: 1;
+  transition: background 1.5s;
+  box-shadow: inset -2px -2px 6px rgba(0,0,0,0.2);
+}
+.mercury {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: var(--temp-level, 0%);
+  background: var(--temp-color, #3b82f6);
+  border-radius: 20px;
+  transition: height 1.5s ease-in-out, background 1.5s;
+  z-index: 2;
+}
+.temp-value {
+  font-size: 2rem;
+}
+
+/* 3. Humidity Cloud */
+.humidity-container {
+  flex-direction: column;
+}
+.cloud-icon {
+  font-size: 4rem;
+  color: #94a3b8;
+  z-index: 2;
+  position: relative;
+}
+.drops {
+  position: absolute;
+  top: 55px;
+  display: flex;
+  gap: 12px;
+  opacity: var(--humidity-opacity, 0.5);
+  z-index: 1;
+}
+.drop {
+  width: 5px;
+  height: 15px;
+  background: #0ea5e9;
+  border-radius: 5px;
+  animation: fall 1s infinite linear;
+}
+.drop:nth-child(2) { animation-delay: 0.3s; }
+.drop:nth-child(3) { animation-delay: 0.6s; }
+
+/* 4. Pump */
+.pump-container {
+  gap: 1.5rem;
+}
+.fan-blade {
+  font-size: 3.5rem;
+  display: inline-block;
+  transition: transform 0.3s;
+  filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1));
+}
+.fan-blade.spinning {
+  animation: spin 0.8s infinite linear;
+}
+
+/* 5. Rain */
+.rain-container {
+  gap: 1.5rem;
+}
+.weather-icon {
+  font-size: 4rem;
+  animation: float 3s ease-in-out infinite;
+  filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1));
+}
+.weather-icon.raining {
+  animation: shake 0.5s infinite;
+}
+
+/* Animations */
+@keyframes sway {
+  0%, 100% { transform: rotate(-5deg); }
+  50% { transform: rotate(5deg); }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes fall {
+  0% { transform: translateY(0) scale(1); opacity: 1; }
+  100% { transform: translateY(40px) scale(0.5); opacity: 0; }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px) rotate(-5deg); }
+  75% { transform: translateX(3px) rotate(5deg); }
+}
+
+
+/* ===== REMOTE CONTROL PANEL ===== */
+.remote-control-group {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  padding: 1.5rem 0;
+}
+.control-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1.5rem 1rem;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+}
+.control-btn:hover {
+  transform: translateY(-4px);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 12px 25px rgba(0,0,0,0.1), inset 0 0 0 1px rgba(255,255,255,1);
+}
+.control-btn:active {
+  transform: translateY(1px);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+.btn-icon {
+  font-size: 2.2rem;
+  transition: transform 0.3s;
+}
+.control-btn:hover .btn-icon {
+  transform: scale(1.1);
+}
+.btn-label {
+  font-weight: 700;
+  color: var(--text);
+  font-size: 0.9rem;
+  transition: color 0.3s;
+}
+.remote-status {
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  min-height: 1.5rem;
+  margin-top: 1rem;
+}
+
+/* Active states applied by JS */
+.control-btn.active.control-btn-auto {
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  border-color: #2563eb;
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.3);
+}
+.control-btn.active.control-btn-on {
+  background: linear-gradient(135deg, #10b981, #047857);
+  border-color: #059669;
+  box-shadow: 0 10px 20px rgba(16, 185, 129, 0.3);
+}
+.control-btn.active.control-btn-off {
+  background: linear-gradient(135deg, #ef4444, #b91c1c);
+  border-color: #dc2626;
+  box-shadow: 0 10px 20px rgba(239, 68, 68, 0.3);
+}
+.control-btn.active .btn-label {
+  color: white;
+}
+.control-btn.active .btn-icon {
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
+}
+
+@media (max-width: 680px) {
+  .remote-control-group {
+    grid-template-columns: 1fr;
+  }
+}
+

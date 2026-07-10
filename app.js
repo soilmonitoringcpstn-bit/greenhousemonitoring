@@ -32,15 +32,14 @@ const elements = {
   pumpValue: document.querySelector("#pumpValue"),
   rainValue: document.querySelector("#rainValue"),
   rainRaw: document.querySelector("#rainRaw"),
-  systemStatus: document.querySelector("#systemStatus"),
-  wifiStatus: document.querySelector("#wifiStatus"),
-  wifiRssi: document.querySelector("#wifiRssi"),
-  firebaseStatus: document.querySelector("#firebaseStatus"),
-  lastUpdate: document.querySelector("#lastUpdate"),
-  latestRecord: document.querySelector("#latestRecord"),
   errorPanel: document.querySelector("#errorPanel"),
   errorMessage: document.querySelector("#errorMessage"),
   lastSync: document.querySelector("#lastSync"),
+  soilWaterLevel: document.querySelector("#soilWaterLevel"),
+  tempMercury: document.querySelector("#tempMercury"),
+  humidityDrops: document.querySelector("#humidityDrops"),
+  pumpAnimIcon: document.querySelector("#pumpAnimIcon"),
+  weatherIcon: document.querySelector("#weatherIcon"),
 };
 
 function getByPath(source, path) {
@@ -168,42 +167,71 @@ function renderDashboard(data) {
   const readings = getReadings(data);
   const dhtHasError = readings.dhtError === true || String(readings.dhtError).toLowerCase() === "true";
 
-  elements.soilPercent.textContent = `${formatNumber(readings.soilPercent, 0)}%`;
+  const soilP = readings.soilPercent !== undefined ? readings.soilPercent : 0;
+  elements.soilPercent.textContent = `${formatNumber(soilP, 0)}%`;
   elements.soilRaw.textContent = readings.soilRaw ?? "--";
   elements.soilStatus.textContent = readings.soilStatus || "--";
+  if (elements.soilWaterLevel) {
+    elements.soilWaterLevel.style.setProperty('--soil-level', `${soilP}%`);
+  }
 
-  elements.temperatureValue.textContent = dhtHasError ? "Error" : `${formatNumber(readings.temperature)} deg C`;
+  const tempP = readings.temperature !== undefined ? readings.temperature : 0;
+  elements.temperatureValue.textContent = dhtHasError ? "Error" : `${formatNumber(tempP)}°C`;
   elements.temperatureError.textContent = dhtHasError ? "Sensor error" : "Normal";
-  elements.humidityValue.textContent = dhtHasError ? "Error" : `${formatNumber(readings.humidity)}%`;
+  if (elements.tempMercury) {
+    const minTemp = 0;
+    const maxTemp = 50;
+    let tempPercent = ((tempP - minTemp) / (maxTemp - minTemp)) * 100;
+    tempPercent = Math.max(0, Math.min(100, tempPercent));
+    elements.tempMercury.style.setProperty('--temp-level', `${tempPercent}%`);
+    
+    // Color scaling: Blue (<20) to Green (20-30) to Red (>30)
+    let color = '#ef4444'; // default red
+    if (tempP < 20) color = '#3b82f6'; // blue
+    else if (tempP <= 30) color = '#10b981'; // green
+    elements.tempMercury.style.setProperty('--temp-color', color);
+  }
+
+  const humP = readings.humidity !== undefined ? readings.humidity : 0;
+  elements.humidityValue.textContent = dhtHasError ? "Error" : `${formatNumber(humP)}%`;
   elements.humidityError.textContent = dhtHasError ? "Sensor error" : "Normal";
+  if (elements.humidityDrops) {
+    elements.humidityDrops.style.setProperty('--humidity-opacity', (humP / 100).toFixed(2));
+  }
 
-  elements.pumpValue.textContent = formatBooleanStatus(readings.pumpStatus);
-  elements.rainValue.textContent = formatRainStatus(readings.rainStatus);
+  const isPumpOn = readings.pumpStatus === true || String(readings.pumpStatus).toLowerCase() === "true" || String(readings.pumpStatus).toLowerCase() === "on";
+  elements.pumpValue.textContent = isPumpOn ? "ON" : "OFF";
+  if (elements.pumpAnimIcon) {
+    if (isPumpOn) {
+      elements.pumpAnimIcon.classList.add("spinning");
+    } else {
+      elements.pumpAnimIcon.classList.remove("spinning");
+    }
+  }
+
+  const isRaining = readings.rainStatus === true || String(readings.rainStatus).toLowerCase() === "true" || String(readings.rainStatus).toLowerCase() === "raining" || String(readings.rainStatus).toLowerCase() === "rain detected";
+  elements.rainValue.textContent = isRaining ? "Raining" : "No Rain";
   elements.rainRaw.textContent = readings.rainRaw ?? "--";
+  if (elements.weatherIcon) {
+    if (isRaining) {
+      elements.weatherIcon.textContent = "🌧️";
+      elements.weatherIcon.classList.add("raining");
+    } else {
+      elements.weatherIcon.textContent = "☀️";
+      elements.weatherIcon.classList.remove("raining");
+    }
+  }
 
-  elements.systemStatus.textContent = readings.systemStatus || "--";
-  elements.wifiStatus.textContent = readings.wifiStatus || "--";
-  elements.wifiRssi.textContent = readings.wifiRssi !== undefined ? `${readings.wifiRssi} dBm` : "--";
-  elements.firebaseStatus.textContent = "Connected";
-  elements.lastUpdate.textContent = formatTime(readings.lastUpdate);
   elements.lastSync.textContent = new Date().toLocaleString();
 
-  renderLatestRecord(data);
   elements.errorPanel.hidden = true;
   setConnectionStatus(getFreshnessType() === "error" ? "Offline" : "Connected", getFreshnessType());
 }
 
 function renderError(error) {
   setConnectionStatus("Error", "error");
-  elements.firebaseStatus.textContent = "Error";
   elements.errorMessage.textContent = error.message || "Unable to read Firebase data.";
   elements.errorPanel.hidden = false;
-  elements.latestRecord.innerHTML = `
-    <div>
-      <dt>Firebase Error</dt>
-      <dd>${escapeHtml(error.message || "Unable to read Firebase data.")}</dd>
-    </div>
-  `;
 }
 
 async function loadData() {
@@ -342,6 +370,26 @@ async function sendRemoteCommand(mode, state) {
   }
 }
 
-document.getElementById("remoteAutoBtn")?.addEventListener("click", () => sendRemoteCommand("auto", null));
-document.getElementById("remoteOnBtn")?.addEventListener("click", () => sendRemoteCommand("manual", true));
-document.getElementById("remoteOffBtn")?.addEventListener("click", () => sendRemoteCommand("manual", false));
+function setActiveRemoteBtn(activeId) {
+  const btns = ["remoteAutoBtn", "remoteOnBtn", "remoteOffBtn"];
+  btns.forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) {
+      if (id === activeId) btn.classList.add("active");
+      else btn.classList.remove("active");
+    }
+  });
+}
+
+document.getElementById("remoteAutoBtn")?.addEventListener("click", () => {
+  setActiveRemoteBtn("remoteAutoBtn");
+  sendRemoteCommand("auto", null);
+});
+document.getElementById("remoteOnBtn")?.addEventListener("click", () => {
+  setActiveRemoteBtn("remoteOnBtn");
+  sendRemoteCommand("manual", true);
+});
+document.getElementById("remoteOffBtn")?.addEventListener("click", () => {
+  setActiveRemoteBtn("remoteOffBtn");
+  sendRemoteCommand("manual", false);
+});
