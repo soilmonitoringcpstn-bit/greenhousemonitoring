@@ -104,7 +104,8 @@ void handleRoot() {
   html += ".btn-auto { background: linear-gradient(135deg, #1976d2, #1565c0); }";
   html += ".btn-on { background: linear-gradient(135deg, #388e3c, #2e7d32); }";
   html += ".btn-off { background: linear-gradient(135deg, #d32f2f, #c62828); }";
-  html += ".btn-group { display: flex; justify-content: space-between; gap: 10px; }";
+  html += ".btn-reset { background: linear-gradient(135deg, #f59e0b, #d97706); }";
+  html += ".btn-group { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; }";
   html += "input[type='number'] { padding: 8px; border: 2px solid #b2dfdb; border-radius: 8px; width: 70px; font-weight: bold; color: #004d40; outline: none; }";
   html += "</style></head><body>";
   html += "<h2>Greenhouse Monitor</h2>";
@@ -121,6 +122,7 @@ void handleRoot() {
   html += "<button class=\"btn btn-auto\" onclick=\"setMode('auto','')\">🤖 Auto</button>";
   html += "<button class=\"btn btn-on\" onclick=\"setMode('manual','on')\">💧 ON</button>";
   html += "<button class=\"btn btn-off\" onclick=\"setMode('manual','off')\">🛑 OFF</button>";
+  html += "<button class=\"btn btn-reset\" onclick=\"setMode('reset_cd','')\">🔄 Reset CD</button>";
   html += "</div>";
   html += "<h3>Auto Thresholds</h3>";
   html += "<div class=\"card\" style=\"flex-direction:column; gap:10px; align-items:flex-start;\">";
@@ -188,6 +190,9 @@ void handleSet() {
     } else if (mode == "auto") {
       manualMode = false;
       dryStartTime = 0; // reset auto hysteresis timers
+    } else if (mode == "reset_cd") {
+      lastAutoRunTime = -cooldownTime;
+      Serial.println("Cooldown forcefully reset via Captive Portal.");
     }
   }
   if (server.hasArg("on_thresh")) {
@@ -595,6 +600,9 @@ void sendToFirebase(float temperature, float humidity, bool dhtError,
           }
         } else if (payload.indexOf("\"mode\":\"auto\"") != -1) {
           manualMode = false;
+        } else if (payload.indexOf("\"mode\":\"reset_cd\"") != -1) {
+          lastAutoRunTime = -cooldownTime;
+          Serial.println("Cooldown forcefully reset via Web Dashboard.");
         }
       }
     }

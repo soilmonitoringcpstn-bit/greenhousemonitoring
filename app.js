@@ -381,7 +381,7 @@ async function sendRemoteCommand(mode, state) {
 }
 
 function setActiveRemoteBtn(activeId) {
-  const btns = ["remoteAutoBtn", "remoteOnBtn", "remoteOffBtn"];
+  const btns = ["remoteAutoBtn", "remoteOnBtn", "remoteOffBtn", "remoteResetCDBtn"];
   btns.forEach(id => {
     const btn = document.getElementById(id);
     if (btn) {
@@ -402,6 +402,10 @@ document.getElementById("remoteOnBtn")?.addEventListener("click", () => {
 document.getElementById("remoteOffBtn")?.addEventListener("click", () => {
   setActiveRemoteBtn("remoteOffBtn");
   sendRemoteCommand("manual", false);
+});
+document.getElementById("remoteResetCDBtn")?.addEventListener("click", () => {
+  setActiveRemoteBtn("remoteResetCDBtn");
+  sendRemoteCommand("reset_cd", null);
 });
 
 // ===== OFFLINE DETECTION =====
