@@ -497,10 +497,10 @@ void sendToFirebase(float temperature, float humidity, bool dhtError,
 
   jsonData += "}";
 
-  Serial.println("Sending data to Firebase...");
+  Serial.println("Sending data to Firebase using PATCH...");
   Serial.println(jsonData);
 
-  int httpResponseCode = http.PUT(jsonData);
+  int httpResponseCode = http.PATCH(jsonData);
 
   Serial.print("Firebase Response Code: ");
   Serial.println(httpResponseCode);
@@ -520,7 +520,7 @@ void sendToFirebase(float temperature, float humidity, bool dhtError,
   
   // FETCH REMOTE COMMANDS
   String controlURL = firebaseURL;
-  controlURL.replace("greenhouse.json", "greenhouse_control.json");
+  controlURL.replace(".json", "/control.json");
   if (http.begin(client, controlURL)) {
     int getResponseCode = http.GET();
     if (getResponseCode == 200) {

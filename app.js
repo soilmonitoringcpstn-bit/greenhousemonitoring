@@ -321,7 +321,7 @@ if (sessionStorage.getItem(AUTH_STORAGE_KEY) === "true") {
 }
 
 // Remote Control Logic
-const CONTROL_URL = FIREBASE_URL.replace("greenhouse.json", "greenhouse_control.json");
+const CONTROL_URL = FIREBASE_URL.replace(".json", "/control.json");
 
 async function sendRemoteCommand(mode, state) {
   const statusText = document.getElementById("remoteStatusText");
