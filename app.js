@@ -319,3 +319,29 @@ if (sessionStorage.getItem(AUTH_STORAGE_KEY) === "true") {
 } else {
   showLogin();
 }
+
+// Remote Control Logic
+const CONTROL_URL = FIREBASE_URL.replace("greenhouse.json", "greenhouse_control.json");
+
+async function sendRemoteCommand(mode, state) {
+  const statusText = document.getElementById("remoteStatusText");
+  if (!statusText) return;
+  
+  statusText.textContent = "Sending command to Firebase...";
+  try {
+    const response = await fetch(CONTROL_URL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: mode, state: state, timestamp: Date.now() })
+    });
+    if (!response.ok) throw new Error(`Firebase returned ${response.status}`);
+    statusText.textContent = `Command sent successfully! (Mode: ${mode})`;
+    setTimeout(() => { statusText.textContent = ""; }, 3000);
+  } catch (error) {
+    statusText.textContent = "Error sending command: " + error.message;
+  }
+}
+
+document.getElementById("remoteAutoBtn")?.addEventListener("click", () => sendRemoteCommand("auto", null));
+document.getElementById("remoteOnBtn")?.addEventListener("click", () => sendRemoteCommand("manual", true));
+document.getElementById("remoteOffBtn")?.addEventListener("click", () => sendRemoteCommand("manual", false));

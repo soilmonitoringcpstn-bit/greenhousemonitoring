@@ -169,6 +169,19 @@
             </div>
           </dl>
         </article>
+
+        <article class="panel admin-panel" id="adminControlPanel">
+          <div class="panel-heading">
+            <p class="eyebrow">Admin</p>
+            <h2>Remote Pump Control</h2>
+          </div>
+          <div style="display: flex; gap: 10px; padding: 20px;">
+            <button id="remoteAutoBtn" class="logout-button" style="background:#1565c0;color:white;border:none;">Auto Mode</button>
+            <button id="remoteOnBtn" class="logout-button" style="background:#2e7d32;color:white;border:none;">Manual ON</button>
+            <button id="remoteOffBtn" class="logout-button" style="background:#d32f2f;color:white;border:none;">Manual OFF</button>
+          </div>
+          <p id="remoteStatusText" style="padding: 0 20px 20px 20px; color: #666; font-size: 0.9em; margin: 0;"></p>
+        </article>
       </section>
 
       <section id="errorPanel" class="panel error-panel" hidden>
