@@ -132,6 +132,7 @@ function getReadings(data) {
     rainRaw: getFirstValue(data, ["sensors.rain.raw_value", "rain_raw"]),
     rainStatus: getFirstValue(data, ["sensors.rain.status", "sensors.rain.detected", "rain_status", "rain_detected"]),
     pumpStatus: getFirstValue(data, ["actuator.pump.status", "actuator.pump.is_on", "pump_on"]),
+    pumpCooldown: getFirstValue(data, ["actuator.pump.cooldown_active"]),
     systemStatus: getFirstValue(data, ["system.status", "system_status"]),
     wifiStatus: getFirstValue(data, ["system.wifi_status", "wifi_status"]),
     wifiRssi: getFirstValue(data, ["system.wifi_rssi", "wifi_rssi"]),
@@ -209,6 +210,13 @@ function renderDashboard(data) {
     } else {
       elements.pumpAnimIcon.classList.remove("spinning");
     }
+  }
+  
+  const pumpCooldownEl = document.getElementById("pumpCooldownValue");
+  if (pumpCooldownEl) {
+    const isCoolingDown = readings.pumpCooldown === true || String(readings.pumpCooldown).toLowerCase() === "true";
+    pumpCooldownEl.textContent = isCoolingDown ? "Active (5hr)" : "Inactive";
+    pumpCooldownEl.style.color = isCoolingDown ? "#f59e0b" : "inherit";
   }
 
   const isRaining = readings.rainStatus === true || String(readings.rainStatus).toLowerCase() === "true" || String(readings.rainStatus).toLowerCase() === "raining" || String(readings.rainStatus).toLowerCase() === "rain detected";

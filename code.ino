@@ -73,9 +73,9 @@ const int   daylightOffset_sec = 0;
 
 // ===== AUTO RUN LIMIT & COOLDOWN =====
 unsigned long pumpOnTime = 0;
-unsigned long lastAutoRunTime = 0;
 const unsigned long maxRunTime = 120000;       // 2 minutes in ms
 const unsigned long cooldownTime = 18000000;   // 5 hours in ms
+unsigned long lastAutoRunTime = -cooldownTime; // Prevents cooldown on boot
 
 // ===== DRY DELAY PROTECTION =====
 // Soil must stay dry for 10 seconds before pump turns ON
@@ -114,6 +114,7 @@ void handleRoot() {
   html += "<div class=\"card\"><strong>Rain Detected:</strong> <span class=\"val\" id=\"rain\">--</span></div>";
   html += "<div class=\"card\"><strong>Pump Relay:</strong> <span class=\"val\" id=\"pump\">--</span></div>";
   html += "<div class=\"card\"><strong>System Mode:</strong> <span class=\"val\" id=\"mode\">--</span></div>";
+  html += "<div class=\"card\"><strong>Cooldown Active:</strong> <span class=\"val\" id=\"cd\">--</span></div>";
   
   html += "<h3>Pump Control</h3>";
   html += "<div class=\"btn-group\">";
@@ -137,6 +138,7 @@ void handleRoot() {
   html += "    document.getElementById('rain').innerHTML = d.rainDetected ? 'Yes' : 'No';";
   html += "    document.getElementById('pump').innerHTML = d.pumpState ? 'ON' : 'OFF';";
   html += "    document.getElementById('mode').innerHTML = d.manualMode ? 'MANUAL' : 'AUTO';";
+  html += "    document.getElementById('cd').innerHTML = (d.cooldown === 'true' || d.cooldown === true) ? 'YES' : 'NO';";
   html += "    if(document.activeElement.id !== 'inpOn') document.getElementById('inpOn').value = d.onThresh;";
   html += "    if(document.activeElement.id !== 'inpOff') document.getElementById('inpOff').value = d.offThresh;";
   html += "  });";
@@ -167,7 +169,8 @@ void handleData() {
   json += "\"pumpState\":" + String(pumpState ? "true" : "false") + ",";
   json += "\"manualMode\":" + String(manualMode ? "true" : "false") + ",";
   json += "\"onThresh\":" + String(pumpOnThreshold) + ",";
-  json += "\"offThresh\":" + String(pumpOffThreshold);
+  json += "\"offThresh\":" + String(pumpOffThreshold) + ",";
+  json += "\"cooldown\":" + String(((millis() - lastAutoRunTime) < cooldownTime) ? "true" : "false");
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -538,6 +541,7 @@ void sendToFirebase(float temperature, float humidity, bool dhtError,
   jsonData += "\"pump\":{";
   jsonData += "\"status\":\"" + pumpStatus + "\",";
   jsonData += "\"is_on\":" + String(pumpState ? "true" : "false") + ",";
+  jsonData += "\"cooldown_active\":" + String(((millis() - lastAutoRunTime) < cooldownTime) ? "true" : "false") + ",";
   jsonData += "\"relay_pin\":23";
   jsonData += "}";
   jsonData += "},";
