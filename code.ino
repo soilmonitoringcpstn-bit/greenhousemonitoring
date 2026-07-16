@@ -334,10 +334,12 @@ void runDiagnostics() {
   // 2. Test Soil Moisture
   int soil = analogRead(SOIL_PIN);
   Serial.print("[TEST] Soil Moisture Sensor: ");
-  if (soil == 0 || soil >= 4095) {
+  if (soil == 0) {
     Serial.print("WARNING (Raw: ");
     Serial.print(soil);
-    Serial.println(", might be disconnected or shorted)");
+    Serial.println(", might be shorted to GND)");
+  } else if (soil >= 4095) {
+    Serial.println("PASS (Raw: 4095 - Completely Dry / Open Air)");
   } else {
     Serial.print("PASS (Raw: ");
     Serial.print(soil);
@@ -347,10 +349,12 @@ void runDiagnostics() {
   // 3. Test Rain Sensor
   int rain = analogRead(RAIN_PIN);
   Serial.print("[TEST] Rain Sensor: ");
-  if (rain == 0 || rain >= 4095) {
+  if (rain == 0) {
     Serial.print("WARNING (Raw: ");
     Serial.print(rain);
-    Serial.println(", might be disconnected or shorted)");
+    Serial.println(", might be shorted to GND)");
+  } else if (rain >= 4095) {
+    Serial.println("PASS (Raw: 4095 - Completely Dry / No Rain)");
   } else {
     Serial.print("PASS (Raw: ");
     Serial.print(rain);
