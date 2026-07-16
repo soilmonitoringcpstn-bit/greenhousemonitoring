@@ -318,6 +318,76 @@ void connectNetwork() {
   syncCellularTime();
 }
 
+void runDiagnostics() {
+  Serial.println("\n--- RUNNING STARTUP DIAGNOSTICS ---");
+  
+  // 1. Test DHT22
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+  Serial.print("[TEST] DHT22 Sensor: ");
+  if (isnan(h) || isnan(t)) {
+    Serial.println("FAIL (Check wiring)");
+  } else {
+    Serial.print("PASS (Temp: ");
+    Serial.print(t);
+    Serial.print("C, Hum: ");
+    Serial.print(h);
+    Serial.println("%)");
+  }
+
+  // 2. Test Soil Moisture
+  int soil = analogRead(SOIL_PIN);
+  Serial.print("[TEST] Soil Moisture Sensor: ");
+  if (soil == 0 || soil >= 4095) {
+    Serial.print("WARNING (Raw: ");
+    Serial.print(soil);
+    Serial.println(", might be disconnected or shorted)");
+  } else {
+    Serial.print("PASS (Raw: ");
+    Serial.print(soil);
+    Serial.println(")");
+  }
+
+  // 3. Test Rain Sensor
+  int rain = analogRead(RAIN_PIN);
+  Serial.print("[TEST] Rain Sensor: ");
+  if (rain == 0 || rain >= 4095) {
+    Serial.print("WARNING (Raw: ");
+    Serial.print(rain);
+    Serial.println(", might be disconnected or shorted)");
+  } else {
+    Serial.print("PASS (Raw: ");
+    Serial.print(rain);
+    Serial.println(")");
+  }
+
+  // 4. Test SIM Module
+  Serial.print("[TEST] SIM Module (A760E): ");
+  SerialAT.begin(115200, SERIAL_8N1, RX_PIN, TX_PIN);
+  safeDelay(3000);
+  if (modem.testAT()) {
+    String ccid = modem.getSimCCID();
+    String imei = modem.getIMEI();
+    if (ccid.length() > 0 && ccid != "0" && imei.length() > 0) {
+      Serial.println("PASS (SIM Card Detected)");
+      Serial.print("       IMEI: ");
+      Serial.println(imei);
+      Serial.print("       CCID: ");
+      Serial.println(ccid);
+      
+      int csq = modem.getSignalQuality();
+      Serial.print("       Signal Quality (CSQ): ");
+      Serial.println(csq);
+    } else {
+      Serial.println("FAIL (Module responded, but SIM card is MISSING or locked)");
+    }
+  } else {
+    Serial.println("FAIL (Module not responding to AT commands. Check RX/TX/Power)");
+  }
+
+  Serial.println("--- DIAGNOSTICS COMPLETE ---\n");
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -360,7 +430,10 @@ void setup() {
   digitalWrite(RELAY_PIN, RELAY_OFF);
   Serial.println("Pump relay OFF at startup.");
 
-  // 3. Connect Cellular, fallback to WiFi
+  // 3. RUN DIAGNOSTICS
+  runDiagnostics();
+
+  // 4. Connect Cellular
   connectNetwork();
 }
 
