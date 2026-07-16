@@ -274,10 +274,6 @@ void syncCellularTime() {
 void connectNetwork() {
   Serial.println("Attempting to connect to Cellular Network (A760E)...");
   
-  // Power on / reset modem if needed
-  SerialAT.begin(115200, SERIAL_8N1, RX_PIN, TX_PIN);
-  safeDelay(3000);
-  
   if (!modem.init()) {
     Serial.println("Failed to initialize modem! Retrying later.");
     cellularActive = false;
