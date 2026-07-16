@@ -40,10 +40,6 @@ bool currentDhtError = false;
 bool manualMode = false;
 bool manualPumpState = false;
 
-// ===== WIFI SETTINGS =====
-#define WIFI_SSID "Simonne"
-#define WIFI_PASSWORD "9bA4GYd"
-
 // ===== FIREBASE RTDB URL =====
 String firebaseURL = "https://soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app/greenhouse.json";
 
@@ -200,7 +196,7 @@ void handleRoot() {
 
 void handleData() {
   String json = "{";
-  json += "\"network\":\"" + String(cellularActive ? "Cellular" : "WiFi") + "\",";
+  json += "\"network\":\"" + String(cellularActive ? "Cellular" : "Disconnected") + "\",";
   json += "\"temperature\":" + String(currentTemperature, 2) + ",";
   json += "\"humidity\":" + String(currentHumidity, 2) + ",";
   json += "\"soilPercent\":" + String(currentSoilPercent) + ",";
@@ -275,41 +271,6 @@ void syncCellularTime() {
   }
 }
 
-void connectWiFi() {
-  cellularActive = false;
-  Serial.print("Connecting to WiFi: ");
-  Serial.println(WIFI_SSID);
-
-  WiFi.mode(WIFI_AP_STA); // Dual mode: Station + Access Point
-  WiFi.disconnect(true);
-  safeDelay(1000);
-
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  int tries = 0;
-  while (WiFi.status() != WL_CONNECTED && tries < 40) {
-    safeDelay(500);
-    Serial.print(".");
-    tries++;
-  }
-
-  Serial.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("WiFi connected!");
-    Serial.print("ESP32 IP Address: ");
-    Serial.println(WiFi.localIP());
-    Serial.print("WiFi RSSI: ");
-    Serial.println(WiFi.RSSI());
-    
-    // Configure NTP
-    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-    Serial.println("Time configured via NTP.");
-  } else {
-    Serial.println("WiFi failed. Check SSID, password, or 2.4GHz hotspot.");
-  }
-}
-
 void connectNetwork() {
   Serial.println("Attempting to connect to Cellular Network (A760E)...");
   
@@ -318,8 +279,8 @@ void connectNetwork() {
   safeDelay(3000);
   
   if (!modem.init()) {
-    Serial.println("Failed to initialize modem! Falling back to WiFi.");
-    connectWiFi();
+    Serial.println("Failed to initialize modem! Retrying later.");
+    cellularActive = false;
     return;
   }
 
@@ -336,8 +297,8 @@ void connectNetwork() {
   }
 
   if (!netConnected) {
-    Serial.println(" fail. Falling back to WiFi.");
-    connectWiFi();
+    Serial.println(" fail. Retrying later.");
+    cellularActive = false;
     return;
   }
   Serial.println(" success.");
@@ -345,8 +306,8 @@ void connectNetwork() {
   Serial.print("Connecting to APN: ");
   Serial.print(apn);
   if (!modem.gprsConnect(apn, gprsUser, gprsPass)) {
-    Serial.println(" fail. Falling back to WiFi.");
-    connectWiFi();
+    Serial.println(" fail. Retrying later.");
+    cellularActive = false;
     return;
   }
   
@@ -505,7 +466,7 @@ void loop() {
     Serial.println();
     Serial.println("========== GREENHOUSE DATA ==========");
     Serial.print("Network: ");
-    Serial.println(cellularActive ? "Cellular (A760E)" : "WiFi");
+    Serial.println(cellularActive ? "Cellular (A760E)" : "Disconnected");
 
     if (dhtError) {
       Serial.println("DHT22: ERROR - Check wiring or sensor.");
@@ -552,10 +513,7 @@ void loop() {
       Serial.println("INACTIVE");
     }
 
-    if (!cellularActive) {
-      Serial.print("WiFi Status: ");
-      Serial.println(WiFi.status() == WL_CONNECTED ? "CONNECTED" : "DISCONNECTED");
-    }
+
 
     if (dryStartTime > 0 && !pumpState) {
       Serial.print("Dry timer: ");
@@ -567,15 +525,12 @@ void loop() {
     if (millis() - lastSend >= sendInterval) {
       lastSend = millis();
 
-      if (!cellularActive && WiFi.status() != WL_CONNECTED) {
-        Serial.println("WiFi disconnected. Reconnecting...");
-        connectWiFi();
-      } else if (cellularActive && !modem.isNetworkConnected()) {
+      if (!cellularActive || !modem.isNetworkConnected()) {
         Serial.println("Cellular disconnected. Reconnecting...");
         connectNetwork();
       }
 
-      if (cellularActive || WiFi.status() == WL_CONNECTED) {
+      if (cellularActive) {
         sendToFirebase(
           temperature,
           humidity,
@@ -624,7 +579,7 @@ void sendToFirebase(float temperature, float humidity, bool dhtError,
 
   String rainStatus = rainDetected ? "Rain Detected" : "No Rain";
   String pumpStatus = pumpState ? "ON" : "OFF";
-  String networkStatus = cellularActive ? "Cellular Connected" : (WiFi.status() == WL_CONNECTED ? "WiFi Connected" : "Disconnected");
+  String networkStatus = cellularActive ? "Cellular Connected" : "Disconnected";
 
   String jsonData = "{";
   jsonData += "\"sensors\":{";
@@ -663,11 +618,8 @@ void sendToFirebase(float temperature, float humidity, bool dhtError,
 
   jsonData += "\"system\":{";
   jsonData += "\"status\":\"online\",";
-  jsonData += "\"network_type\":\"" + String(cellularActive ? "cellular" : "wifi") + "\",";
+  jsonData += "\"network_type\":\"" + String(cellularActive ? "cellular" : "disconnected") + "\",";
   jsonData += "\"network_status\":\"" + networkStatus + "\",";
-  if (!cellularActive) {
-    jsonData += "\"wifi_rssi\":" + String(WiFi.RSSI()) + ",";
-  }
   jsonData += "\"last_update_unix\":" + String(time(nullptr));
   jsonData += "}";
   jsonData += "}";
