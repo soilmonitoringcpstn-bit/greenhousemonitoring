@@ -1,3 +1,6 @@
+#define TINY_GSM_MODEM_A7672X
+#include <TinyGsmClient.h>
+
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
@@ -10,6 +13,19 @@ WebServer server(80);
 DNSServer dnsServer;
 
 const byte DNS_PORT = 53;
+
+// ===== CELLULAR SETTINGS =====
+#define SerialAT Serial2
+#define RX_PIN 16
+#define TX_PIN 17
+const char apn[]  = "internet"; // Default APN
+const char gprsUser[] = "";
+const char gprsPass[] = "";
+
+TinyGsm modem(SerialAT);
+TinyGsmClientSecure gsmClient(modem);
+
+bool cellularActive = false;
 
 // ===== GLOBAL SENSOR DATA =====
 float currentHumidity = 0.0;
@@ -29,7 +45,6 @@ bool manualPumpState = false;
 #define WIFI_PASSWORD "9bA4GYd"
 
 // ===== FIREBASE RTDB URL =====
-// .json is required
 String firebaseURL = "https://soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app/greenhouse.json";
 
 // ===== DHT22 =====
@@ -45,19 +60,14 @@ DHT dht(DHTPIN, DHTTYPE);
 #define RELAY_PIN 23
 
 // Most relay modules are ACTIVE LOW
-// LOW = ON, HIGH = OFF
 #define RELAY_ON LOW
 #define RELAY_OFF HIGH
 
 // ===== SOIL CALIBRATION =====
-// Higher raw value = drier soil
-// Lower raw value = wetter soil
-// Wider range to avoid sudden percentage drop
 int soilDryValue = 1600;
 int soilWetValue = 500;
 
 // ===== RAIN CALIBRATION =====
-// Below this value = rain detected
 int rainThreshold = 3800;
 
 // ===== PUMP THRESHOLDS =====
@@ -78,7 +88,6 @@ const unsigned long cooldownTime = 18000000;   // 5 hours in ms
 unsigned long lastAutoRunTime = -cooldownTime; // Prevents cooldown on boot
 
 // ===== DRY DELAY PROTECTION =====
-// Soil must stay dry for 10 seconds before pump turns ON
 unsigned long dryStartTime = 0;
 const unsigned long dryDelay = 10000;
 
@@ -89,6 +98,33 @@ const unsigned long readInterval = 2000;
 // ===== FIREBASE SEND INTERVAL =====
 unsigned long lastSend = 0;
 unsigned long sendInterval = 10000; // send every 10 seconds
+
+// ===== HELPER FUNCTIONS TO KEEP PORTAL ALIVE =====
+void servicePortal() {
+  dnsServer.processNextRequest();
+  server.handleClient();
+}
+
+void managePumpSafety() {
+  if (pumpState && pumpOnTime > 0) {
+    if ((millis() - pumpOnTime) >= maxRunTime) {
+      pumpState = false;
+      pumpOnTime = 0;
+      lastAutoRunTime = millis();
+      digitalWrite(RELAY_PIN, RELAY_OFF);
+      Serial.println("Safety: 2-min limit reached during blocking delay. Pump OFF.");
+    }
+  }
+}
+
+void safeDelay(unsigned long ms) {
+  unsigned long start = millis();
+  while (millis() - start < ms) {
+    servicePortal();
+    managePumpSafety();
+    delay(1);
+  }
+}
 
 void handleRoot() {
   String html = "<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
@@ -109,6 +145,7 @@ void handleRoot() {
   html += "input[type='number'] { padding: 8px; border: 2px solid #b2dfdb; border-radius: 8px; width: 70px; font-weight: bold; color: #004d40; outline: none; }";
   html += "</style></head><body>";
   html += "<h2>Greenhouse Monitor</h2>";
+  html += "<div class=\"card\"><strong>Network:</strong> <span class=\"val\" id=\"netw\">--</span></div>";
   html += "<div class=\"card\"><strong>Temperature:</strong> <span class=\"val\" id=\"temp\">--</span></div>";
   html += "<div class=\"card\"><strong>Humidity:</strong> <span class=\"val\" id=\"hum\">--</span></div>";
   html += "<div class=\"card\"><strong>Soil Moisture:</strong> <span class=\"val\" id=\"soil\">--</span></div>";
@@ -134,6 +171,7 @@ void handleRoot() {
   html += "<script>";
   html += "function fetchData() {";
   html += "  fetch('/data').then(r=>r.json()).then(d=>{";
+  html += "    document.getElementById('netw').innerHTML = d.network;";
   html += "    document.getElementById('temp').innerHTML = d.dhtError ? 'Error' : d.temperature + ' &deg;C';";
   html += "    document.getElementById('hum').innerHTML = d.dhtError ? 'Error' : d.humidity + ' %';";
   html += "    document.getElementById('soil').innerHTML = d.soilPercent + ' % (Raw: ' + d.soilRaw + ')';";
@@ -162,6 +200,7 @@ void handleRoot() {
 
 void handleData() {
   String json = "{";
+  json += "\"network\":\"" + String(cellularActive ? "Cellular" : "WiFi") + "\",";
   json += "\"temperature\":" + String(currentTemperature, 2) + ",";
   json += "\"humidity\":" + String(currentHumidity, 2) + ",";
   json += "\"soilPercent\":" + String(currentSoilPercent) + ",";
@@ -213,225 +252,43 @@ void handleNotFound() {
   handleRoot();
 }
 
-void setup() {
-  Serial.begin(115200);
-  delay(1000);
-
-  Serial.println();
-  Serial.println("SMART GREENHOUSE SYSTEM STARTING...");
-  Serial.println("DHT22 + Soil + Rain + Relay + WiFi + Firebase");
-  Serial.println("---------------------------------------------");
-
-  dht.begin();
-
-  pinMode(SOIL_PIN, INPUT);
-  pinMode(RAIN_PIN, INPUT);
-  pinMode(RELAY_PIN, OUTPUT);
-
-  digitalWrite(RELAY_PIN, RELAY_OFF);
-  Serial.println("Pump relay OFF at startup.");
-
-  connectWiFi();
-
-  // Configure NTP
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  Serial.println("Time configured via NTP.");
-
-  server.on("/", handleRoot);
-  server.on("/data", handleData);
-  server.on("/set", handleSet);
-  server.onNotFound(handleNotFound); // Redirect captive portal requests
-  server.begin();
-  Serial.println("HTTP server started");
+void syncCellularTime() {
+  int year3=0, month3=0, day3=0, hour3=0, min3=0, sec3=0;
+  float timezone=0;
+  Serial.println("Requesting time from Cellular Network...");
+  if (modem.getNetworkTime(&year3, &month3, &day3, &hour3, &min3, &sec3, &timezone)) {
+    struct tm t = {0};
+    t.tm_year = year3 - 1900;
+    t.tm_mon = month3 - 1;
+    t.tm_mday = day3;
+    t.tm_hour = hour3;
+    t.tm_min = min3;
+    t.tm_sec = sec3;
+    time_t timeSinceEpoch = mktime(&t);
+    struct timeval tv;
+    tv.tv_sec = timeSinceEpoch;
+    tv.tv_usec = 0;
+    settimeofday(&tv, NULL);
+    Serial.println("Time synced via Cellular Network.");
+  } else {
+    Serial.println("Failed to get Cellular Time.");
+  }
 }
 
-void loop() {
-  dnsServer.processNextRequest(); // Handle captive portal DNS requests
-  server.handleClient();
-
-  if (millis() - lastReadTime >= readInterval) {
-    lastReadTime = millis();
-
-    // ===== READ DHT22 =====
-    float humidity = dht.readHumidity();
-    float temperature = dht.readTemperature();
-
-    // ===== READ SENSORS =====
-  int soilRaw = readSoilAverage();
-  int rainRaw = analogRead(RAIN_PIN);
-
-  // ===== CONVERT SOIL RAW TO PERCENT =====
-  int soilPercent = map(soilRaw, soilDryValue, soilWetValue, 0, 100);
-  soilPercent = constrain(soilPercent, 0, 100);
-
-  bool dhtError = isnan(humidity) || isnan(temperature);
-  bool rainDetected = rainRaw < rainThreshold;
-
-  // Update global variables for web server
-  currentHumidity = humidity;
-  currentTemperature = temperature;
-  currentSoilRaw = soilRaw;
-  currentSoilPercent = soilPercent;
-  currentRainRaw = rainRaw;
-  currentRainDetected = rainDetected;
-  currentDhtError = dhtError;
-
-  // ===== TIME SCHEDULING LOGIC =====
-  struct tm timeinfo;
-  bool isScheduledTime = false;
-  if (getLocalTime(&timeinfo, 10)) { // 10ms non-blocking
-    if ((timeinfo.tm_hour == 6 || timeinfo.tm_hour == 18) && timeinfo.tm_min < 2) {
-      isScheduledTime = true;
-    }
-  }
-
-  // ===== PUMP LOGIC =====
-  if (manualMode) {
-    if (pumpState != manualPumpState) {
-      pumpState = manualPumpState;
-      Serial.print("Manual Mode: Pump ");
-      Serial.println(pumpState ? "ON" : "OFF");
-    }
-    dryStartTime = 0;
-    pumpOnTime = 0;
-  } else if (isScheduledTime) {
-    // Scheduled 6 AM/PM override (runs for 2 minutes)
-    if (!pumpState) {
-      pumpState = true;
-      Serial.println("Scheduled Time (6 AM/PM). Pump forced ON.");
-    }
-    dryStartTime = 0;
-    pumpOnTime = 0;
-  } else {
-    // ===== AUTO MODE (WITH COOLDOWN & 2-MIN LIMIT) =====
-    bool coolingDown = (millis() - lastAutoRunTime) < cooldownTime;
-    
-    if (pumpState) {
-      // Pump is currently ON in Auto Mode
-      if ((millis() - pumpOnTime) >= maxRunTime) {
-        // Run limit reached (2 minutes)
-        pumpState = false;
-        lastAutoRunTime = millis(); // Start 5-hour cooldown
-        Serial.println("Auto Mode: 2-minute limit reached. Pump OFF. Cooldown started.");
-      } else if (rainDetected) {
-        // Stop immediately if it rains
-        pumpState = false;
-        lastAutoRunTime = millis();
-        Serial.println("Auto Mode: Rain detected. Pump OFF. Cooldown started.");
-      }
-    } else {
-      // Pump is currently OFF
-      if (soilPercent < pumpOnThreshold && !rainDetected && !coolingDown) {
-        if (dryStartTime == 0) {
-          dryStartTime = millis();
-          Serial.println("Soil dry & cooldown finished. Dry timer started...");
-        }
-        
-        // Wait 10 seconds before triggering
-        if (millis() - dryStartTime >= dryDelay) {
-          pumpState = true;
-          pumpOnTime = millis(); // Record start time for 2-min limit
-          Serial.println("Soil stayed dry. Pump ON for 2 minutes.");
-          dryStartTime = 0;
-        }
-      } else {
-        dryStartTime = 0;
-      }
-    }
-  }
-
-  digitalWrite(RELAY_PIN, pumpState ? RELAY_ON : RELAY_OFF);
-
-  // ===== SERIAL MONITOR DISPLAY =====
-  Serial.println();
-  Serial.println("========== GREENHOUSE DATA ==========");
-
-  if (dhtError) {
-    Serial.println("DHT22: ERROR - Check wiring or sensor.");
-  } else {
-    Serial.print("Temperature: ");
-    Serial.print(temperature);
-    Serial.println(" C");
-
-    Serial.print("Humidity: ");
-    Serial.print(humidity);
-    Serial.println(" %");
-  }
-
-  Serial.print("Soil Raw: ");
-  Serial.print(soilRaw);
-  Serial.print(" | Soil Moisture: ");
-  Serial.print(soilPercent);
-  Serial.println(" %");
-
-  if (soilPercent < 15) {
-    Serial.println("Soil Status: DRY");
-  } else if (soilPercent < 55) {
-    Serial.println("Soil Status: MOIST");
-  } else {
-    Serial.println("Soil Status: WET");
-  }
-
-  Serial.print("Rain Raw: ");
-  Serial.print(rainRaw);
-  Serial.print(" | Rain Status: ");
-  Serial.println(rainDetected ? "RAIN DETECTED" : "NO RAIN");
-
-  Serial.print("Pump Relay: ");
-  Serial.println(pumpState ? "ON" : "OFF");
-
-  Serial.print("WiFi Status: ");
-  Serial.println(WiFi.status() == WL_CONNECTED ? "CONNECTED" : "DISCONNECTED");
-
-  if (dryStartTime > 0 && !pumpState) {
-    Serial.print("Dry timer: ");
-    Serial.print((millis() - dryStartTime) / 1000);
-    Serial.println(" seconds");
-  }
-
-  // ===== SEND TO FIREBASE =====
-  if (millis() - lastSend >= sendInterval) {
-    lastSend = millis();
-
-    if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("WiFi disconnected. Reconnecting...");
-      connectWiFi();
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
-      sendToFirebase(
-        temperature,
-        humidity,
-        dhtError,
-        soilRaw,
-        soilPercent,
-        rainRaw,
-        rainDetected,
-        pumpState
-      );
-    }
-  }
-
-  Serial.println("=====================================");
-
-  } // End of readInterval block
-}
-
-// ===== WIFI FUNCTION =====
 void connectWiFi() {
+  cellularActive = false;
   Serial.print("Connecting to WiFi: ");
   Serial.println(WIFI_SSID);
 
   WiFi.mode(WIFI_AP_STA); // Dual mode: Station + Access Point
   WiFi.disconnect(true);
-  delay(1000);
+  safeDelay(1000);
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   int tries = 0;
-
   while (WiFi.status() != WL_CONNECTED && tries < 40) {
-    delay(500);
+    safeDelay(500);
     Serial.print(".");
     tries++;
   }
@@ -444,18 +301,286 @@ void connectWiFi() {
     Serial.println(WiFi.localIP());
     Serial.print("WiFi RSSI: ");
     Serial.println(WiFi.RSSI());
+    
+    // Configure NTP
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    Serial.println("Time configured via NTP.");
   } else {
     Serial.println("WiFi failed. Check SSID, password, or 2.4GHz hotspot.");
   }
+}
 
-  // Set up AP mode
+void connectNetwork() {
+  Serial.println("Attempting to connect to Cellular Network (A760E)...");
+  
+  // Power on / reset modem if needed
+  SerialAT.begin(115200, SERIAL_8N1, RX_PIN, TX_PIN);
+  safeDelay(3000);
+  
+  if (!modem.init()) {
+    Serial.println("Failed to initialize modem! Falling back to WiFi.");
+    connectWiFi();
+    return;
+  }
+
+  Serial.print("Waiting for network (up to 60s)...");
+  unsigned long start = millis();
+  bool netConnected = false;
+  while (millis() - start < 60000L) {
+    if (modem.isNetworkConnected()) {
+      netConnected = true;
+      break;
+    }
+    safeDelay(500);
+    Serial.print(".");
+  }
+
+  if (!netConnected) {
+    Serial.println(" fail. Falling back to WiFi.");
+    connectWiFi();
+    return;
+  }
+  Serial.println(" success.");
+
+  Serial.print("Connecting to APN: ");
+  Serial.print(apn);
+  if (!modem.gprsConnect(apn, gprsUser, gprsPass)) {
+    Serial.println(" fail. Falling back to WiFi.");
+    connectWiFi();
+    return;
+  }
+  
+  Serial.println(" success!");
+  cellularActive = true;
+  
+  // Sync RTC from cellular network
+  syncCellularTime();
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  Serial.println();
+  Serial.println("SMART GREENHOUSE SYSTEM STARTING...");
+  Serial.println("DHT22 + Soil + Rain + Relay + Cellular/WiFi + Firebase");
+  Serial.println("---------------------------------------------");
+
+  // 1. START AP AND SERVER FIRST (so it's never blocked)
+  WiFi.mode(WIFI_AP);
+  IPAddress apIP(192, 168, 4, 1);
+  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
   WiFi.softAP("Greenhouse_Portal");
   Serial.print("AP IP address: ");
   Serial.println(WiFi.softAPIP());
 
-  // Start DNS Server
-  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
-  Serial.println("DNS Server started for Captive Portal");
+  dnsServer.start(DNS_PORT, "*", apIP);
+  
+  server.on("/", handleRoot);
+  server.on("/data", handleData);
+  server.on("/set", handleSet);
+
+  // Common captive portal detection URLs
+  server.on("/generate_204", handleRoot);
+  server.on("/gen_204", handleRoot);
+  server.on("/hotspot-detect.html", handleRoot);
+  server.on("/connecttest.txt", handleRoot);
+  server.on("/ncsi.txt", handleRoot);
+
+  server.onNotFound(handleNotFound); // Redirect captive portal requests
+  server.begin();
+  Serial.println("Captive Portal started. Connect to 'Greenhouse_Portal' now!");
+
+  // 2. INIT SENSORS
+  dht.begin();
+  pinMode(SOIL_PIN, INPUT);
+  pinMode(RAIN_PIN, INPUT);
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, RELAY_OFF);
+  Serial.println("Pump relay OFF at startup.");
+
+  // 3. Connect Cellular, fallback to WiFi
+  connectNetwork();
+}
+
+void loop() {
+  servicePortal();
+
+  if (millis() - lastReadTime >= readInterval) {
+    lastReadTime = millis();
+
+    // ===== READ DHT22 =====
+    float humidity = dht.readHumidity();
+    float temperature = dht.readTemperature();
+
+    // ===== READ SENSORS =====
+    int soilRaw = readSoilAverage();
+    int rainRaw = analogRead(RAIN_PIN);
+
+    // ===== CONVERT SOIL RAW TO PERCENT =====
+    int soilPercent = map(soilRaw, soilDryValue, soilWetValue, 0, 100);
+    soilPercent = constrain(soilPercent, 0, 100);
+
+    bool dhtError = isnan(humidity) || isnan(temperature);
+    bool rainDetected = rainRaw < rainThreshold;
+
+    // Update global variables for web server
+    currentHumidity = humidity;
+    currentTemperature = temperature;
+    currentSoilRaw = soilRaw;
+    currentSoilPercent = soilPercent;
+    currentRainRaw = rainRaw;
+    currentRainDetected = rainDetected;
+    currentDhtError = dhtError;
+
+    // ===== TIME SCHEDULING LOGIC =====
+    struct tm timeinfo;
+    bool isScheduledTime = false;
+    if (getLocalTime(&timeinfo, 10)) { // 10ms non-blocking
+      if ((timeinfo.tm_hour == 6 || timeinfo.tm_hour == 18) && timeinfo.tm_min < 2) {
+        isScheduledTime = true;
+      }
+    }
+
+    // ===== PUMP LOGIC =====
+    if (manualMode) {
+      if (pumpState != manualPumpState) {
+        pumpState = manualPumpState;
+        Serial.print("Manual Mode: Pump ");
+        Serial.println(pumpState ? "ON" : "OFF");
+      }
+      dryStartTime = 0;
+      pumpOnTime = 0;
+    } else if (isScheduledTime) {
+      // Scheduled 6 AM/PM override (runs for 2 minutes)
+      if (!pumpState) {
+        pumpState = true;
+        Serial.println("Scheduled Time (6 AM/PM). Pump forced ON.");
+      }
+      dryStartTime = 0;
+      pumpOnTime = 0;
+    } else {
+      // ===== AUTO MODE (WITH COOLDOWN & 2-MIN LIMIT) =====
+      bool coolingDown = (millis() - lastAutoRunTime) < cooldownTime;
+      
+      if (pumpState) {
+        // Pump is currently ON in Auto Mode
+        if ((millis() - pumpOnTime) >= maxRunTime) {
+          // Run limit reached (2 minutes)
+          pumpState = false;
+          pumpOnTime = 0;
+          lastAutoRunTime = millis(); // Start 5-hour cooldown
+          Serial.println("Auto Mode: 2-minute limit reached. Pump OFF. Cooldown started.");
+        } else if (rainDetected) {
+          // Stop immediately if it rains
+          pumpState = false;
+          pumpOnTime = 0;
+          lastAutoRunTime = millis();
+          Serial.println("Auto Mode: Rain detected. Pump OFF. Cooldown started.");
+        }
+      } else {
+        // Pump is currently OFF
+        if (soilPercent < pumpOnThreshold && !rainDetected && !coolingDown) {
+          if (dryStartTime == 0) {
+            dryStartTime = millis();
+            Serial.println("Soil dry & cooldown finished. Dry timer started...");
+          }
+          
+          // Wait 10 seconds before triggering
+          if (millis() - dryStartTime >= dryDelay) {
+            pumpState = true;
+            pumpOnTime = millis(); // Record start time for 2-min limit
+            Serial.println("Soil stayed dry. Pump ON for 2 minutes.");
+            dryStartTime = 0;
+          }
+        } else {
+          dryStartTime = 0;
+        }
+      }
+    }
+
+    digitalWrite(RELAY_PIN, pumpState ? RELAY_ON : RELAY_OFF);
+
+    // ===== SERIAL MONITOR DISPLAY =====
+    Serial.println();
+    Serial.println("========== GREENHOUSE DATA ==========");
+    Serial.print("Network: ");
+    Serial.println(cellularActive ? "Cellular (A760E)" : "WiFi");
+
+    if (dhtError) {
+      Serial.println("DHT22: ERROR - Check wiring or sensor.");
+    } else {
+      Serial.print("Temperature: ");
+      Serial.print(temperature);
+      Serial.println(" C");
+
+      Serial.print("Humidity: ");
+      Serial.print(humidity);
+      Serial.println(" %");
+    }
+
+    Serial.print("Soil Raw: ");
+    Serial.print(soilRaw);
+    Serial.print(" | Soil Moisture: ");
+    Serial.print(soilPercent);
+    Serial.println(" %");
+
+    if (soilPercent < 15) {
+      Serial.println("Soil Status: DRY");
+    } else if (soilPercent < 55) {
+      Serial.println("Soil Status: MOIST");
+    } else {
+      Serial.println("Soil Status: WET");
+    }
+
+    Serial.print("Rain Raw: ");
+    Serial.print(rainRaw);
+    Serial.print(" | Rain Status: ");
+    Serial.println(rainDetected ? "RAIN DETECTED" : "NO RAIN");
+
+    Serial.print("Pump Relay: ");
+    Serial.println(pumpState ? "ON" : "OFF");
+
+    if (!cellularActive) {
+      Serial.print("WiFi Status: ");
+      Serial.println(WiFi.status() == WL_CONNECTED ? "CONNECTED" : "DISCONNECTED");
+    }
+
+    if (dryStartTime > 0 && !pumpState) {
+      Serial.print("Dry timer: ");
+      Serial.print((millis() - dryStartTime) / 1000);
+      Serial.println(" seconds");
+    }
+
+    // ===== SEND TO FIREBASE =====
+    if (millis() - lastSend >= sendInterval) {
+      lastSend = millis();
+
+      if (!cellularActive && WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi disconnected. Reconnecting...");
+        connectWiFi();
+      } else if (cellularActive && !modem.isNetworkConnected()) {
+        Serial.println("Cellular disconnected. Reconnecting...");
+        connectNetwork();
+      }
+
+      if (cellularActive || WiFi.status() == WL_CONNECTED) {
+        sendToFirebase(
+          temperature,
+          humidity,
+          dhtError,
+          soilRaw,
+          soilPercent,
+          rainRaw,
+          rainDetected,
+          pumpState
+        );
+      }
+    }
+
+    Serial.println("=====================================");
+
+  } // End of readInterval block
 }
 
 // ===== SOIL AVERAGE FUNCTION =====
@@ -465,7 +590,7 @@ int readSoilAverage() {
 
   for (int i = 0; i < samples; i++) {
     total += analogRead(SOIL_PIN);
-    delay(10);
+    safeDelay(10);
   }
 
   return total / samples;
@@ -477,30 +602,7 @@ void sendToFirebase(float temperature, float humidity, bool dhtError,
                     int rainRaw, bool rainDetected,
                     bool pumpState) {
 
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Firebase cancelled: WiFi not connected.");
-    return;
-  }
-
-  WiFiClientSecure client;
-  client.setInsecure();
-  client.setTimeout(15000);
-
-  HTTPClient http;
-  http.setTimeout(15000);
-  http.setReuse(false);
-
-  bool beginOK = http.begin(client, firebaseURL);
-
-  if (!beginOK) {
-    Serial.println("Firebase Error: http.begin() failed. Check Firebase URL.");
-    return;
-  }
-
-  http.addHeader("Content-Type", "application/json");
-
   String soilStatus;
-
   if (soilPercent < 15) {
     soilStatus = "Dry";
   } else if (soilPercent < 55) {
@@ -511,12 +613,10 @@ void sendToFirebase(float temperature, float humidity, bool dhtError,
 
   String rainStatus = rainDetected ? "Rain Detected" : "No Rain";
   String pumpStatus = pumpState ? "ON" : "OFF";
-  String wifiStatus = WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected";
+  String networkStatus = cellularActive ? "Cellular Connected" : (WiFi.status() == WL_CONNECTED ? "WiFi Connected" : "Disconnected");
 
   String jsonData = "{";
-
   jsonData += "\"sensors\":{";
-
   jsonData += "\"dht22\":{";
   if (!dhtError) {
     jsonData += "\"temperature_celsius\":" + String(temperature, 2) + ",";
@@ -539,7 +639,6 @@ void sendToFirebase(float temperature, float humidity, bool dhtError,
   jsonData += "\"detected\":" + String(rainDetected ? "true" : "false") + ",";
   jsonData += "\"status\":\"" + rainStatus + "\"";
   jsonData += "}";
-
   jsonData += "},";
 
   jsonData += "\"actuator\":{";
@@ -553,42 +652,64 @@ void sendToFirebase(float temperature, float humidity, bool dhtError,
 
   jsonData += "\"system\":{";
   jsonData += "\"status\":\"online\",";
-  jsonData += "\"wifi_status\":\"" + wifiStatus + "\",";
-  jsonData += "\"wifi_rssi\":" + String(WiFi.RSSI()) + ",";
+  jsonData += "\"network_type\":\"" + String(cellularActive ? "cellular" : "wifi") + "\",";
+  jsonData += "\"network_status\":\"" + networkStatus + "\",";
+  if (!cellularActive) {
+    jsonData += "\"wifi_rssi\":" + String(WiFi.RSSI()) + ",";
+  }
   jsonData += "\"last_update_unix\":" + String(time(nullptr));
   jsonData += "}";
-
   jsonData += "}";
 
+  String serverName = "soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app";
+  String patchPath = "/greenhouse.json";
+  String getPath = "/control.json";
+
   Serial.println("Sending data to Firebase using PATCH...");
-  Serial.println(jsonData);
 
-  int httpResponseCode = http.PATCH(jsonData);
+  if (cellularActive) {
+    if (gsmClient.connect(serverName.c_str(), 443)) {
+      gsmClient.print(String("PATCH ") + patchPath + " HTTP/1.1\r\n" + 
+                      "Host: " + serverName + "\r\n" + 
+                      "Connection: close\r\n" + 
+                      "Content-Type: application/json\r\n" + 
+                      "Content-Length: " + String(jsonData.length()) + "\r\n\r\n" + 
+                      jsonData);
+      unsigned long timeout = millis();
+      while (gsmClient.connected() && millis() - timeout < 10000L) {
+        while (gsmClient.available()) {
+          gsmClient.read(); // Consume response
+          timeout = millis();
+        }
+      }
+      gsmClient.stop();
+      Serial.println("Firebase: Cellular PATCH completed.");
+    } else {
+      Serial.println("Firebase Cellular Error: Connection failed.");
+    }
 
-  Serial.print("Firebase Response Code: ");
-  Serial.println(httpResponseCode);
-
-  if (httpResponseCode == 200) {
-    Serial.println("Firebase: Data sent successfully.");
-  } else if (httpResponseCode > 0) {
-    Serial.print("Firebase response: ");
-    Serial.println(http.getString());
-  } else {
-    Serial.print("Firebase Error: ");
-    Serial.println(http.errorToString(httpResponseCode));
-  }
-
-  http.end();
-  client.stop(); // Stop the previous connection completely before starting a new one
-  
-  // FETCH REMOTE COMMANDS
-  String controlURL = firebaseURL;
-  controlURL.replace(".json", "/control.json");
-  if (http.begin(client, controlURL)) {
-    int getResponseCode = http.GET();
-    if (getResponseCode == 200) {
-      String payload = http.getString();
-      if (payload != "null") {
+    // FETCH REMOTE COMMANDS
+    if (gsmClient.connect(serverName.c_str(), 443)) {
+      gsmClient.print(String("GET ") + getPath + " HTTP/1.1\r\n" + 
+                      "Host: " + serverName + "\r\n" + 
+                      "Connection: close\r\n\r\n");
+      String payload = "";
+      bool isBody = false;
+      unsigned long timeout = millis();
+      while (gsmClient.connected() && millis() - timeout < 10000L) {
+        while (gsmClient.available()) {
+          String line = gsmClient.readStringUntil('\n');
+          timeout = millis();
+          if (line == "\r") {
+            isBody = true;
+          } else if (isBody) {
+            payload += line;
+          }
+        }
+      }
+      gsmClient.stop();
+      
+      if (payload != "null" && payload.length() > 0) {
         Serial.print("Firebase Control Payload: ");
         Serial.println(payload);
         if (payload.indexOf("\"mode\":\"manual\"") != -1) {
@@ -606,8 +727,64 @@ void sendToFirebase(float temperature, float humidity, bool dhtError,
         }
       }
     }
-    http.end();
-  }
+  } else {
+    HTTPClient httpWiFi;
+    httpWiFi.setTimeout(15000);
+    httpWiFi.setReuse(false);
+    
+    WiFiClientSecure wifiClient;
+    wifiClient.setInsecure();
+    wifiClient.setTimeout(15000);
+    
+    String fullUrl = "https://" + serverName + patchPath;
+    if (!httpWiFi.begin(wifiClient, fullUrl)) {
+      Serial.println("Firebase Error: http.begin() failed.");
+      return;
+    }
 
-  client.stop();
+    httpWiFi.addHeader("Content-Type", "application/json");
+    int httpResponseCode = httpWiFi.PATCH(jsonData);
+
+    Serial.print("Firebase Response Code: ");
+    Serial.println(httpResponseCode);
+
+    if (httpResponseCode == 200) {
+      Serial.println("Firebase: Data sent successfully.");
+    } else if (httpResponseCode > 0) {
+      Serial.print("Firebase response: ");
+      Serial.println(httpWiFi.getString());
+    } else {
+      Serial.print("Firebase Error: ");
+      Serial.println(httpWiFi.errorToString(httpResponseCode));
+    }
+    httpWiFi.end();
+
+    // FETCH REMOTE COMMANDS
+    String controlUrl = "https://" + serverName + getPath;
+    if (httpWiFi.begin(wifiClient, controlUrl)) {
+      int getResponseCode = httpWiFi.GET();
+      if (getResponseCode == 200) {
+        String payload = httpWiFi.getString();
+        if (payload != "null") {
+          Serial.print("Firebase Control Payload: ");
+          Serial.println(payload);
+          if (payload.indexOf("\"mode\":\"manual\"") != -1) {
+            manualMode = true;
+            if (payload.indexOf("\"state\":true") != -1) {
+              manualPumpState = true;
+            } else if (payload.indexOf("\"state\":false") != -1) {
+              manualPumpState = false;
+            }
+          } else if (payload.indexOf("\"mode\":\"auto\"") != -1) {
+            manualMode = false;
+          } else if (payload.indexOf("\"mode\":\"reset_cd\"") != -1) {
+            lastAutoRunTime = -cooldownTime;
+            Serial.println("Cooldown forcefully reset via Web Dashboard.");
+          }
+        }
+      }
+      httpWiFi.end();
+    }
+    wifiClient.stop();
+  }
 }
