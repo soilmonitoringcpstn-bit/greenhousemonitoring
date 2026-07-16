@@ -298,9 +298,17 @@ void connectNetwork() {
     return;
   }
   Serial.println(" success.");
+  
+  int csq = modem.getSignalQuality();
+  Serial.print("Signal Quality (CSQ): ");
+  Serial.println(csq);
+  
+  safeDelay(3000); // Give LTE time to stabilize
 
   Serial.print("Connecting to APN: ");
   Serial.print(apn);
+  Serial.print(" (This can take up to 60 seconds)... ");
+  
   if (!modem.gprsConnect(apn, gprsUser, gprsPass)) {
     Serial.println(" fail. Retrying later.");
     cellularActive = false;
