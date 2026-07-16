@@ -18,7 +18,7 @@ const byte DNS_PORT = 53;
 #define SerialAT Serial2
 #define RX_PIN 16
 #define TX_PIN 17
-const char apn[]  = "internet"; // Default APN
+const char apn[]  = "smartlte"; // Smart LTE APN
 const char gprsUser[] = "";
 const char gprsPass[] = "";
 
