@@ -541,6 +541,17 @@ void loop() {
     Serial.print("Pump Relay: ");
     Serial.println(pumpState ? "ON" : "OFF");
 
+    bool isCooling = (millis() - lastAutoRunTime) < cooldownTime;
+    Serial.print("Cooldown: ");
+    if (isCooling) {
+      unsigned long remaining = cooldownTime - (millis() - lastAutoRunTime);
+      Serial.print("ACTIVE (");
+      Serial.print(remaining / 1000 / 60);
+      Serial.println(" mins left)");
+    } else {
+      Serial.println("INACTIVE");
+    }
+
     if (!cellularActive) {
       Serial.print("WiFi Status: ");
       Serial.println(WiFi.status() == WL_CONNECTED ? "CONNECTED" : "DISCONNECTED");
