@@ -5,7 +5,7 @@ if (!FIREBASE_URL) {
 }
 
 const STALE_AFTER_MS = 3 * 60 * 1000;
-const HIDE_READINGS_AFTER_MS = 15 * 60 * 1000;
+const MARK_READINGS_STALE_AFTER_MS = 15 * 60 * 1000;
 const SIGNATURE_STORAGE_KEY = "greenhouseLatestSignature";
 const CHANGED_AT_STORAGE_KEY = "greenhouseLastDataChangedAt";
 const AUTH_STORAGE_KEY = "greenhouseDashboardLoggedIn";
@@ -171,25 +171,10 @@ function renderLatestRecord(data) {
     .join("");
 }
 
-function hideStaleReadings() {
-  elements.soilPercent.textContent = "--";
-  elements.soilRaw.textContent = "--";
-  elements.soilStatus.textContent = "Stale data";
-  elements.temperatureValue.textContent = "--";
-  elements.temperatureError.textContent = "Stale data";
-  elements.humidityValue.textContent = "--";
-  elements.humidityError.textContent = "Stale data";
-  elements.pumpValue.textContent = "--";
-  elements.rainValue.textContent = "--";
-  elements.rainRaw.textContent = "--";
-  elements.soilWaterLevel?.style.setProperty("--soil-level", "0%");
-  elements.tempMercury?.style.setProperty("--temp-level", "0%");
-  elements.humidityDrops?.style.setProperty("--humidity-opacity", "0");
+function markReadingsStale() {
   elements.pumpAnimIcon?.classList.remove("spinning");
-  const cooldown = document.getElementById("pumpCooldownValue");
-  if (cooldown) cooldown.textContent = "--";
   document.body.classList.add("system-offline");
-  setConnectionStatus("Offline", "error");
+  setConnectionStatus("Offline · Last known values", "error");
 }
 
 function renderDashboard(data) {
@@ -282,8 +267,8 @@ function renderDashboard(data) {
   elements.errorPanel.hidden = true;
   setConnectionStatus(getFreshnessType() === "error" ? "Offline" : "Connected", getFreshnessType());
 
-  if (!deviceTimeIsValid || Date.now() - deviceTimeMs > HIDE_READINGS_AFTER_MS) {
-    hideStaleReadings();
+  if (!deviceTimeIsValid || Date.now() - deviceTimeMs > MARK_READINGS_STALE_AFTER_MS) {
+    markReadingsStale();
   }
 }
 
@@ -429,8 +414,8 @@ setInterval(() => {
   const currentUnix = Math.floor(Date.now() / 1000);
   const diffSeconds = currentUnix - latestUnixTimestamp;
 
-  if (latestUnixTimestamp < 0 || diffSeconds > HIDE_READINGS_AFTER_MS / 1000) {
-    hideStaleReadings();
+  if (latestUnixTimestamp < 0 || diffSeconds > MARK_READINGS_STALE_AFTER_MS / 1000) {
+    markReadingsStale();
   }
 
   if (diffSeconds > STALE_AFTER_MS / 1000) {
