@@ -1,12 +1,12 @@
-const FIREBASE_URL =
-  "https://soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app/greenhouse.json";
+const FIREBASE_URL = window.GREENHOUSE_CONFIG?.firebaseUrl;
+
+if (!FIREBASE_URL) {
+  throw new Error("Missing GREENHOUSE_CONFIG.firebaseUrl in app-config.js");
+}
 
 const STALE_AFTER_MS = 3 * 60 * 1000;
 const SIGNATURE_STORAGE_KEY = "greenhouseLatestSignature";
 const CHANGED_AT_STORAGE_KEY = "greenhouseLastDataChangedAt";
-const AUTH_STORAGE_KEY = "greenhouseDashboardLoggedIn";
-const LOGIN_USERNAME = "admin";
-const LOGIN_PASSWORD = "greenhouse";
 
 let latestData = null;
 let latestSignature = localStorage.getItem(SIGNATURE_STORAGE_KEY) || "";
@@ -14,13 +14,6 @@ let lastDataChangedAt = Number(localStorage.getItem(CHANGED_AT_STORAGE_KEY)) || 
 let realtimeStarted = false;
 
 const elements = {
-  loginScreen: document.querySelector("#loginScreen"),
-  loginForm: document.querySelector("#loginForm"),
-  usernameInput: document.querySelector("#usernameInput"),
-  passwordInput: document.querySelector("#passwordInput"),
-  loginError: document.querySelector("#loginError"),
-  appShell: document.querySelector("#appShell"),
-  logoutButton: document.querySelector("#logoutButton"),
   connectionText: document.querySelector("#connectionText"),
   soilPercent: document.querySelector("#soilPercent"),
   soilRaw: document.querySelector("#soilRaw"),
@@ -318,95 +311,8 @@ function startRealtimeUpdates() {
   setInterval(loadData, 300000);
 }
 
-function showDashboard() {
-  elements.loginScreen.hidden = true;
-  elements.appShell.hidden = false;
-  loadData();
-  startRealtimeUpdates();
-}
-
-function showLogin() {
-  elements.loginScreen.hidden = false;
-  elements.appShell.hidden = true;
-  elements.passwordInput.value = "";
-  elements.usernameInput.focus();
-}
-
-elements.loginForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  const username = elements.usernameInput.value.trim();
-  const password = elements.passwordInput.value;
-
-  if (username === LOGIN_USERNAME && password === LOGIN_PASSWORD) {
-    sessionStorage.setItem(AUTH_STORAGE_KEY, "true");
-    elements.loginError.textContent = "";
-    showDashboard();
-    return;
-  }
-
-  elements.loginError.textContent = "Invalid username or password.";
-});
-
-elements.logoutButton.addEventListener("click", () => {
-  sessionStorage.removeItem(AUTH_STORAGE_KEY);
-  showLogin();
-});
-
-if (sessionStorage.getItem(AUTH_STORAGE_KEY) === "true") {
-  showDashboard();
-} else {
-  showLogin();
-}
-
-// Remote Control Logic
-const CONTROL_URL = FIREBASE_URL.replace(".json", "/control.json");
-
-async function sendRemoteCommand(mode, state) {
-  const statusText = document.getElementById("remoteStatusText");
-  if (!statusText) return;
-  
-  statusText.textContent = "Sending command to Firebase...";
-  try {
-    const response = await fetch(CONTROL_URL, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: mode, state: state, timestamp: Date.now() })
-    });
-    if (!response.ok) throw new Error(`Firebase returned ${response.status}`);
-    statusText.textContent = `Command sent successfully! (Mode: ${mode})`;
-    setTimeout(() => { statusText.textContent = ""; }, 3000);
-  } catch (error) {
-    statusText.textContent = "Error sending command: " + error.message;
-  }
-}
-
-function setActiveRemoteBtn(activeId) {
-  const btns = ["remoteAutoBtn", "remoteOnBtn", "remoteOffBtn", "remoteResetCDBtn"];
-  btns.forEach(id => {
-    const btn = document.getElementById(id);
-    if (btn) {
-      if (id === activeId) btn.classList.add("active");
-      else btn.classList.remove("active");
-    }
-  });
-}
-
-document.getElementById("remoteAutoBtn")?.addEventListener("click", () => {
-  setActiveRemoteBtn("remoteAutoBtn");
-  sendRemoteCommand("auto", null);
-});
-document.getElementById("remoteOnBtn")?.addEventListener("click", () => {
-  setActiveRemoteBtn("remoteOnBtn");
-  sendRemoteCommand("manual", true);
-});
-document.getElementById("remoteOffBtn")?.addEventListener("click", () => {
-  setActiveRemoteBtn("remoteOffBtn");
-  sendRemoteCommand("manual", false);
-});
-document.getElementById("remoteResetCDBtn")?.addEventListener("click", () => {
-  setActiveRemoteBtn("remoteResetCDBtn");
-  sendRemoteCommand("reset_cd", null);
-});
+loadData();
+startRealtimeUpdates();
 
 // ===== OFFLINE DETECTION =====
 let latestUnixTimestamp = 0;

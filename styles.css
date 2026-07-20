@@ -629,6 +629,12 @@ dd {
   background: rgba(255, 255, 255, 0.9);
   box-shadow: 0 12px 25px rgba(0,0,0,0.1), inset 0 0 0 1px rgba(255,255,255,1);
 }
+
+.control-btn:disabled {
+  cursor: wait;
+  opacity: 0.55;
+  transform: none;
+}
 .control-btn:active {
   transform: translateY(1px);
   box-shadow: 0 2px 10px rgba(0,0,0,0.05);
