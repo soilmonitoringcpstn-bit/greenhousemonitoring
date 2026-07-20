@@ -605,6 +605,22 @@ void syncCellularTime() {
   float timezone=0;
   Serial.println("Requesting time from Cellular Network...");
   if (modem.getNetworkTime(&year3, &month3, &day3, &hour3, &min3, &sec3, &timezone)) {
+    // Some modem firmware returns a two-digit year while other versions return
+    // the complete year. Normalize it before constructing struct tm.
+    if (year3 >= 0 && year3 < 100) year3 += 2000;
+
+    if (year3 < 2024 || year3 > 2035 || month3 < 1 || month3 > 12 ||
+        day3 < 1 || day3 > 31 || hour3 < 0 || hour3 > 23 ||
+        min3 < 0 || min3 > 59 || sec3 < 0 || sec3 > 60) {
+      Serial.print("Rejected invalid cellular date: ");
+      Serial.print(year3);
+      Serial.print("-");
+      Serial.print(month3);
+      Serial.print("-");
+      Serial.println(day3);
+      return;
+    }
+
     struct tm t = {0};
     t.tm_year = year3 - 1900;
     t.tm_mon = month3 - 1;
@@ -613,6 +629,15 @@ void syncCellularTime() {
     t.tm_min = min3;
     t.tm_sec = sec3;
     time_t timeSinceEpoch = mktime(&t);
+    // Network time fields are local to the cellular timezone. ESP32 starts in
+    // UTC, so convert that local clock back to UTC before storing Unix time.
+    if (timezone >= -14.0f && timezone <= 14.0f) {
+      timeSinceEpoch -= (long)(timezone * 3600.0f);
+    }
+    if (timeSinceEpoch < 1704067200 || timeSinceEpoch > 2082758400) {
+      Serial.println("Rejected out-of-range cellular Unix timestamp.");
+      return;
+    }
     struct timeval tv;
     tv.tv_sec = timeSinceEpoch;
     tv.tv_usec = 0;
@@ -1395,6 +1420,7 @@ void sendToFirebase(float temperature, float humidity, bool dhtError,
   jsonData += "\"status\":\"online\",";
   jsonData += "\"network_type\":\"" + String(cellularActive ? "cellular" : "disconnected") + "\",";
   jsonData += "\"network_status\":\"" + networkStatus + "\",";
+  jsonData += "\"last_update_server\":{\".sv\":\"timestamp\"},";
   jsonData += "\"last_update_unix\":" + String(time(nullptr));
   jsonData += "}";
   jsonData += "}";

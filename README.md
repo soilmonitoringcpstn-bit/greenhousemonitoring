@@ -21,6 +21,10 @@ Remote commands use `/control/command` and acknowledgements use `/control/ack`.
 Commands require a unique `command_id`, `issued_at`, and `expires_at` Unix timestamp.
 The dashboard reports success only after the ESP32 acknowledges execution.
 
+Hosted freshness checks use Firebase's `system.last_update_server` server
+timestamp. The ESP32 `system.last_update_unix` value remains as a compatibility
+fallback, so a bad device clock cannot normally make stale readings look current.
+
 The local `Greenhouse_Portal` can also store a backup router SSID and password.
 When cellular Firebase access is unavailable, the ESP32 keeps its captive portal
 active and sends cloud traffic through the configured Wi-Fi connection.
