@@ -7,6 +7,7 @@ if (!FIREBASE_URL) {
 const STALE_AFTER_MS = 3 * 60 * 1000;
 const SIGNATURE_STORAGE_KEY = "greenhouseLatestSignature";
 const CHANGED_AT_STORAGE_KEY = "greenhouseLastDataChangedAt";
+const AUTH_STORAGE_KEY = "greenhouseDashboardLoggedIn";
 
 let latestData = null;
 let latestSignature = localStorage.getItem(SIGNATURE_STORAGE_KEY) || "";
@@ -14,6 +15,13 @@ let lastDataChangedAt = Number(localStorage.getItem(CHANGED_AT_STORAGE_KEY)) || 
 let realtimeStarted = false;
 
 const elements = {
+  loginScreen: document.querySelector("#loginScreen"),
+  loginForm: document.querySelector("#loginForm"),
+  usernameInput: document.querySelector("#usernameInput"),
+  passwordInput: document.querySelector("#passwordInput"),
+  loginError: document.querySelector("#loginError"),
+  appShell: document.querySelector("#appShell"),
+  logoutButton: document.querySelector("#logoutButton"),
   connectionText: document.querySelector("#connectionText"),
   soilPercent: document.querySelector("#soilPercent"),
   soilRaw: document.querySelector("#soilRaw"),
@@ -27,6 +35,7 @@ const elements = {
   rainRaw: document.querySelector("#rainRaw"),
   errorPanel: document.querySelector("#errorPanel"),
   errorMessage: document.querySelector("#errorMessage"),
+  deviceLastUpdate: document.querySelector("#deviceLastUpdate"),
   lastSync: document.querySelector("#lastSync"),
   soilWaterLevel: document.querySelector("#soilWaterLevel"),
   tempMercury: document.querySelector("#tempMercury"),
@@ -225,6 +234,10 @@ function renderDashboard(data) {
     }
   }
 
+  const deviceTimestamp = Number(readings.lastUpdateUnix);
+  elements.deviceLastUpdate.textContent = Number.isFinite(deviceTimestamp) && deviceTimestamp > 0
+    ? new Date(deviceTimestamp * 1000).toLocaleString()
+    : "Unavailable";
   elements.lastSync.textContent = new Date().toLocaleString();
 
   elements.errorPanel.hidden = true;
@@ -311,8 +324,46 @@ function startRealtimeUpdates() {
   setInterval(loadData, 300000);
 }
 
-loadData();
-startRealtimeUpdates();
+function showDashboard() {
+  elements.loginScreen.hidden = true;
+  elements.appShell.hidden = false;
+  loadData();
+  startRealtimeUpdates();
+}
+
+function showLogin() {
+  elements.loginScreen.hidden = false;
+  elements.appShell.hidden = true;
+  elements.passwordInput.value = "";
+  elements.usernameInput.focus();
+}
+
+elements.loginForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const configuredLogin = window.GREENHOUSE_CONFIG?.dashboardLogin;
+  const username = elements.usernameInput.value.trim();
+  const password = elements.passwordInput.value;
+
+  if (configuredLogin && username === configuredLogin.username && password === configuredLogin.password) {
+    sessionStorage.setItem(AUTH_STORAGE_KEY, "true");
+    elements.loginError.textContent = "";
+    showDashboard();
+    return;
+  }
+
+  elements.loginError.textContent = "Invalid username or password.";
+});
+
+elements.logoutButton.addEventListener("click", () => {
+  sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  showLogin();
+});
+
+if (sessionStorage.getItem(AUTH_STORAGE_KEY) === "true") {
+  showDashboard();
+} else {
+  showLogin();
+}
 
 // ===== OFFLINE DETECTION =====
 let latestUnixTimestamp = 0;
@@ -330,7 +381,7 @@ setInterval(() => {
   const currentUnix = Math.floor(Date.now() / 1000);
   const diffSeconds = currentUnix - latestUnixTimestamp;
 
-  if (diffSeconds > 30) {
+  if (diffSeconds > STALE_AFTER_MS / 1000) {
     document.body.classList.add('system-offline');
   } else {
     document.body.classList.remove('system-offline');

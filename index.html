@@ -17,14 +17,38 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div id="appShell">
+    <section id="loginScreen" class="login-screen" aria-labelledby="loginTitle">
+      <form id="loginForm" class="login-card">
+        <p class="eyebrow">Monitoring Access</p>
+        <h1 id="loginTitle">Smart Greenhouse Login</h1>
+        <p class="login-copy">Sign in to view the greenhouse monitoring dashboard.</p>
+
+        <label>
+          <span>Username</span>
+          <input id="usernameInput" type="text" autocomplete="username" required />
+        </label>
+
+        <label>
+          <span>Password</span>
+          <input id="passwordInput" type="password" autocomplete="current-password" required />
+        </label>
+
+        <p id="loginError" class="login-error" role="alert"></p>
+        <button type="submit">Log In</button>
+      </form>
+    </section>
+
+    <div id="appShell" hidden>
     <div id="offlineBanner" class="offline-banner">⚠️ SYSTEM OFFLINE: ESP32 has disconnected. Data is stale.</div>
     <header class="app-header">
       <div>
         <p class="eyebrow">ESP32 Smart Greenhouse System</p>
         <h1>Smart Solar Driven Automated Greenhouse With Cloud Monitoring For Sustainable Tomato Farming</h1>
       </div>
-      <span id="connectionText" class="status-badge neutral">Connecting</span>
+      <div class="header-actions">
+        <span id="connectionText" class="status-badge neutral">Connecting</span>
+        <button id="logoutButton" class="logout-button" type="button">Log Out</button>
+      </div>
     </header>
 
     <main class="dashboard" aria-label="Greenhouse monitoring dashboard">
@@ -139,7 +163,8 @@
     </main>
 
     <footer class="site-footer">
-      <span>Last synchronization: <b id="lastSync">--</b></span>
+      <span>Device last seen: <b id="deviceLastUpdate">--</b></span>
+      <span>Dashboard refreshed: <b id="lastSync">--</b></span>
     </footer>
     </div>
 

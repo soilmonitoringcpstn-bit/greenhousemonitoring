@@ -6,10 +6,11 @@ SMART SOLAR DRIVEN AUTOMATED GREENHOUSE WITH CLOUD MONITORING FOR SUSTAINABLE TO
 
 The site reads live data from Firebase Realtime Database and displays the current soil moisture, temperature, humidity, pump status, and latest record fields.
 
-The hosted dashboard is read-only. Set its Firebase Realtime Database endpoint in
-`app-config.js`; application logic does not contain project-specific URLs or
-hardcoded browser credentials. Pump and safety controls are available only from
-the ESP32 local captive portal.
+The hosted dashboard is read-only. Set its Firebase Realtime Database endpoint
+and optional convenience login in `app-config.js`. The browser login is not a
+security boundary; protect Firebase using Authentication and database rules for
+production use. Pump and safety controls are available only from the ESP32 local
+captive portal.
 
 ## Firmware requirements
 
