@@ -1557,33 +1557,65 @@ String sendA7670AT(const String &command,
   return response;
 }
 
-bool responseContainsHttpSuccess(const String &response, int methodCode) {
-  String ok200 = "+HTTPACTION: " + String(methodCode) + ",200";
-  String ok201 = "+HTTPACTION: " + String(methodCode) + ",201";
-  String ok204 = "+HTTPACTION: " + String(methodCode) + ",204";
+bool parseHttpAction(const String &response, int &methodCode,
+                     int &statusCode, int &responseLength) {
+  const String marker = "+HTTPACTION:";
+  int actionAt = response.indexOf(marker);
+  if (actionAt < 0) return false;
 
-  return response.indexOf(ok200) >= 0 ||
-         response.indexOf(ok201) >= 0 ||
-         response.indexOf(ok204) >= 0;
+  int lineEnd = response.indexOf('\r', actionAt + marker.length());
+  if (lineEnd < 0) lineEnd = response.indexOf('\n', actionAt + marker.length());
+  if (lineEnd < 0) lineEnd = response.length();
+
+  String fields = response.substring(actionAt + marker.length(), lineEnd);
+  fields.trim();
+  fields.replace(" ", "");
+  fields.replace("\t", "");
+
+  int firstComma = fields.indexOf(',');
+  int secondComma = fields.indexOf(',', firstComma + 1);
+  if (firstComma <= 0 || secondComma <= firstComma + 1) return false;
+
+  String methodText = fields.substring(0, firstComma);
+  String statusText = fields.substring(firstComma + 1, secondComma);
+  String lengthText = fields.substring(secondComma + 1);
+  methodText.trim();
+  statusText.trim();
+  lengthText.trim();
+
+  if (methodText.length() == 0 || statusText.length() == 0 ||
+      lengthText.length() == 0) return false;
+  for (size_t i = 0; i < methodText.length(); i++) {
+    if (!isDigit(methodText[i])) return false;
+  }
+  for (size_t i = 0; i < statusText.length(); i++) {
+    if (!isDigit(statusText[i])) return false;
+  }
+  for (size_t i = 0; i < lengthText.length(); i++) {
+    if (!isDigit(lengthText[i])) return false;
+  }
+
+  methodCode = methodText.toInt();
+  statusCode = statusText.toInt();
+  responseLength = lengthText.toInt();
+  return true;
 }
 
-int httpActionResponseLength(const String &response, int methodCode) {
-  String marker = "+HTTPACTION: " + String(methodCode) + ",";
-  int actionAt = response.indexOf(marker);
-  if (actionAt < 0) return -1;
+bool responseContainsHttpSuccess(const String &response, int expectedMethod) {
+  int methodCode = -1;
+  int statusCode = -1;
+  int responseLength = -1;
+  return parseHttpAction(response, methodCode, statusCode, responseLength) &&
+         methodCode == expectedMethod && statusCode >= 200 && statusCode < 300;
+}
 
-  int statusEnd = response.indexOf(',', actionAt + marker.length());
-  if (statusEnd < 0) return -1;
-  int lengthEnd = response.indexOf('\r', statusEnd + 1);
-  if (lengthEnd < 0) lengthEnd = response.indexOf('\n', statusEnd + 1);
-  if (lengthEnd < 0) lengthEnd = response.length();
-
-  String lengthText = response.substring(statusEnd + 1, lengthEnd);
-  lengthText.trim();
-  for (size_t i = 0; i < lengthText.length(); i++) {
-    if (!isDigit(lengthText[i])) return -1;
-  }
-  return lengthText.length() > 0 ? lengthText.toInt() : -1;
+int httpActionResponseLength(const String &response, int expectedMethod) {
+  int methodCode = -1;
+  int statusCode = -1;
+  int responseLength = -1;
+  if (!parseHttpAction(response, methodCode, statusCode, responseLength) ||
+      methodCode != expectedMethod) return -1;
+  return responseLength;
 }
 
 String readNativeHttpResponse(int responseLength) {
