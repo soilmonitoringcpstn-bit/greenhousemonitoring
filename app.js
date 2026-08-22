@@ -1,4 +1,6 @@
 const FIREBASE_URL = window.GREENHOUSE_CONFIG?.firebaseUrl;
+const CONTROL_COMMAND_URL = window.GREENHOUSE_CONFIG?.controlCommandUrl;
+const CONTROL_ACK_URL = window.GREENHOUSE_CONFIG?.controlAckUrl;
 
 if (!FIREBASE_URL) {
   throw new Error("Missing GREENHOUSE_CONFIG.firebaseUrl in app-config.js");
@@ -14,6 +16,7 @@ let latestData = null;
 let latestSignature = localStorage.getItem(SIGNATURE_STORAGE_KEY) || "";
 let lastDataChangedAt = Number(localStorage.getItem(CHANGED_AT_STORAGE_KEY)) || 0;
 let realtimeStarted = false;
+let remoteCommandPending = false;
 
 const elements = {
   loginScreen: document.querySelector("#loginScreen"),
@@ -43,6 +46,9 @@ const elements = {
   humidityDrops: document.querySelector("#humidityDrops"),
   pumpAnimIcon: document.querySelector("#pumpAnimIcon"),
   weatherIcon: document.querySelector("#weatherIcon"),
+  remoteControlStatus: document.querySelector("#remoteControlStatus"),
+  remoteSafetyState: document.querySelector("#remoteSafetyState"),
+  remoteButtons: [...document.querySelectorAll("[data-remote-action]")],
 };
 
 function getByPath(source, path) {
@@ -136,6 +142,10 @@ function getReadings(data) {
     rainStatus: getFirstValue(data, ["sensors.rain.status", "sensors.rain.detected", "rain_status", "rain_detected"]),
     pumpStatus: getFirstValue(data, ["actuator.pump.status", "actuator.pump.is_on", "pump_on"]),
     pumpCooldown: getFirstValue(data, ["actuator.pump.cooldown_active"]),
+    cooldownRemaining: getFirstValue(data, ["actuator.pump.cooldown_remaining_seconds"]),
+    emergencyStop: getFirstValue(data, ["actuator.pump.emergency_stop"]),
+    manualMode: getFirstValue(data, ["actuator.pump.manual_mode"]),
+    stopReason: getFirstValue(data, ["actuator.pump.stop_reason"]),
     systemStatus: getFirstValue(data, ["system.status", "system_status"]),
     wifiStatus: getFirstValue(data, ["system.wifi_status", "wifi_status"]),
     wifiRssi: getFirstValue(data, ["system.wifi_rssi", "wifi_rssi"]),
@@ -158,6 +168,135 @@ function getDeviceLastUpdateMs(data) {
     : NaN;
 }
 
+function isRemoteTelemetryFresh() {
+  const updatedAt = getDeviceLastUpdateMs(latestData || {});
+  return Number.isFinite(updatedAt) && Date.now() - updatedAt < STALE_AFTER_MS;
+}
+
+function setRemoteStatus(message, type = "neutral") {
+  if (!elements.remoteControlStatus) return;
+  elements.remoteControlStatus.className = `acknowledgement-rail ${type}`;
+  const label = elements.remoteControlStatus.querySelector("span:last-child");
+  if (label) label.textContent = message;
+}
+
+function booleanValue(value) {
+  return value === true || String(value).toLowerCase() === "true";
+}
+
+function updateRemoteControlState(readings = getReadings(latestData || {})) {
+  if (!elements.remoteButtons?.length) return;
+  const fresh = isRemoteTelemetryFresh();
+  const configured = Boolean(CONTROL_COMMAND_URL && CONTROL_ACK_URL);
+  const pumpOn = booleanValue(readings.pumpStatus) || String(readings.pumpStatus).toLowerCase() === "on";
+  const emergency = booleanValue(readings.emergencyStop);
+  const manual = booleanValue(readings.manualMode);
+
+  elements.remoteSafetyState.textContent = !configured
+    ? "Control not configured"
+    : fresh
+      ? "Device online · safety enforced"
+      : "Telemetry stale · starts disabled";
+  elements.remoteSafetyState.className = `control-safety-chip ${fresh ? "ready" : ""}`;
+
+  elements.remoteButtons.forEach((button) => {
+    const action = button.dataset.remoteAction;
+    const isSafeStop = action === "pump_off" || action === "emergency_off";
+    button.disabled = remoteCommandPending || !configured || (!fresh && !isSafeStop);
+    button.classList.remove("active");
+    if ((action === "pump_on" && pumpOn) ||
+        (action === "pump_off" && !pumpOn && !emergency) ||
+        (action === "emergency_off" && emergency) ||
+        (action === "auto" && !manual && !emergency)) {
+      button.classList.add("active");
+    }
+  });
+}
+
+function commandId() {
+  if (globalThis.crypto?.randomUUID) return `web-${crypto.randomUUID()}`;
+  return `web-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function readableCommandReason(reason) {
+  const labels = {
+    completed: "Command completed",
+    cooldown_active: "Pump start blocked by the active cooldown",
+    rain_detected: "Pump start blocked because rain is detected",
+    critical_sensor_fault: "Pump start blocked by a sensor fault",
+    emergency_stop_latched: "Clear emergency mode with Auto / Resume first",
+    expired_or_invalid_timestamp: "Command expired before the ESP32 received it",
+    replayed_or_older_command: "The ESP32 rejected an older command",
+    device_clock_not_synchronized: "The ESP32 clock is not synchronized",
+    unsupported_action: "The ESP32 does not support this command",
+  };
+  return labels[reason] || String(reason || "Unknown device response").replace(/_/g, " ");
+}
+
+async function waitForCommandAck(id) {
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const separator = CONTROL_ACK_URL.includes("?") ? "&" : "?";
+    const response = await fetch(`${CONTROL_ACK_URL}${separator}t=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) continue;
+    const ack = await response.json();
+    if (ack?.command_id === id) return ack;
+  }
+  return null;
+}
+
+async function sendRemoteCommand(action) {
+  if (remoteCommandPending) return;
+  const safeStop = action === "pump_off" || action === "emergency_off";
+  if (!safeStop && !isRemoteTelemetryFresh()) {
+    setRemoteStatus("The device is offline or stale; pump-start commands are disabled.", "error");
+    return;
+  }
+
+  const confirmations = {
+    pump_on: "Start the pump remotely? Rain, sensor, cooldown, and runtime protections still apply.",
+    reset_cooldown: "Reset the five-hour safety cooldown remotely?",
+    emergency_off: "Stop the pump and latch emergency mode?",
+  };
+  if (confirmations[action] && !window.confirm(confirmations[action])) return;
+
+  const id = commandId();
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const command = {
+    command_id: id,
+    action,
+    issued_at: issuedAt,
+    expires_at: issuedAt + 45,
+  };
+
+  remoteCommandPending = true;
+  updateRemoteControlState();
+  setRemoteStatus("Sending command to Firebase…", "pending");
+
+  try {
+    const response = await fetch(CONTROL_COMMAND_URL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(command),
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`Firebase rejected command (${response.status})`);
+
+    setRemoteStatus("Command stored · waiting for ESP32 acknowledgement…", "pending");
+    const ack = await waitForCommandAck(id);
+    if (!ack) throw new Error("No ESP32 acknowledgement within 24 seconds");
+
+    const accepted = ack.status === "executed";
+    setRemoteStatus(readableCommandReason(ack.reason), accepted ? "success" : "error");
+    await loadData();
+  } catch (error) {
+    setRemoteStatus(error.message || "Remote command failed", "error");
+  } finally {
+    remoteCommandPending = false;
+    updateRemoteControlState();
+  }
+}
+
 function renderLatestRecord(data) {
   elements.latestRecord.innerHTML = flattenRecord(data)
     .map(
@@ -175,6 +314,7 @@ function markReadingsStale() {
   elements.pumpAnimIcon?.classList.remove("spinning");
   document.body.classList.add("system-offline");
   setConnectionStatus("Offline · Last known values", "error");
+  updateRemoteControlState();
 }
 
 function renderDashboard(data) {
@@ -234,6 +374,7 @@ function renderDashboard(data) {
       elements.pumpAnimIcon.classList.remove("spinning");
     }
   }
+  updateRemoteControlState(readings);
   
   const pumpCooldownEl = document.getElementById("pumpCooldownValue");
   if (pumpCooldownEl) {
@@ -387,6 +528,10 @@ elements.logoutButton.addEventListener("click", () => {
   showLogin();
 });
 
+elements.remoteButtons.forEach((button) => {
+  button.addEventListener("click", () => sendRemoteCommand(button.dataset.remoteAction));
+});
+
 if (sessionStorage.getItem(AUTH_STORAGE_KEY) === "true") {
   showDashboard();
 } else {
@@ -424,4 +569,3 @@ setInterval(() => {
     document.body.classList.remove('system-offline');
   }
 }, 5000); // Check every 5 seconds
-

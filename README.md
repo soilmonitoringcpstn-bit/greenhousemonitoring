@@ -6,25 +6,39 @@ SMART SOLAR DRIVEN AUTOMATED GREENHOUSE WITH CLOUD MONITORING FOR SUSTAINABLE TO
 
 The site reads live data from Firebase Realtime Database and displays the current soil moisture, temperature, humidity, pump status, and latest record fields.
 
-The hosted dashboard is read-only. Set its Firebase Realtime Database endpoint
-and optional convenience login in `app-config.js`. The browser login is not a
-security boundary; protect Firebase using Authentication and database rules for
-production use. Pump and safety controls are available only from the ESP32 local
-captive portal.
+The hosted dashboard includes acknowledged pump controls using
+`/control/command` and `/control/ack`. Set its Firebase Realtime Database
+endpoints in `app-config.js`. The browser login is not a security boundary;
+protect Firebase using Authentication and database rules before public use.
 
 ## Firmware requirements
 
-Install the ESP32 Arduino core plus TinyGSM, DHT sensor library, and ArduinoJson.
+Install the ESP32 Arduino core plus TinyGSM and the Adafruit DHT sensor library.
 `Preferences` is included with the ESP32 core.
-
-Remote commands use `/control/command` and acknowledgements use `/control/ack`.
-Commands require a unique `command_id`, `issued_at`, and `expires_at` Unix timestamp.
-The dashboard reports success only after the ESP32 acknowledges execution.
 
 Hosted freshness checks use Firebase's `system.last_update_server` server
 timestamp. The ESP32 `system.last_update_unix` value remains as a compatibility
 fallback, so a bad device clock cannot normally make stale readings look current.
 
-The local `Greenhouse_Portal` can also store a backup router SSID and password.
-When cellular Firebase access is unavailable, the ESP32 keeps its captive portal
-active and sends cloud traffic through the configured Wi-Fi connection.
+The local `Greenhouse_Portal` stores a router SSID and password. When Wi-Fi
+connects, it becomes the primary cloud route and cellular packet data is
+suspended. Local and acknowledged remote commands share the same pump safety
+checks.
+
+## Complete documentation
+
+Start with [`docs/START_HERE.md`](docs/START_HERE.md). The `docs` directory
+includes:
+
+- Architecture and data flow
+- Arduino IDE setup and upload instructions
+- Pin tables, wiring diagrams, and electrical safety notes
+- Firmware behavior and configuration
+- Function-by-function commented source-code explanation
+- Captive portal and Wi-Fi setup
+- Firebase schema, timestamps, and security guidance
+- Hosted dashboard setup and deployment
+- Commissioning tests, troubleshooting, and maintenance checklists
+
+The complete handoff ZIP also includes the original Markdown guides and
+print-ready PDF versions under `docs/pdf/`.

@@ -153,6 +153,28 @@
         </article>
       </section>
 
+      <section class="panel remote-control-panel" aria-labelledby="remoteControlTitle">
+        <div class="control-panel-heading">
+          <div>
+            <p class="eyebrow">Acknowledged commands</p>
+            <h2 id="remoteControlTitle">Remote pump control</h2>
+          </div>
+          <span id="remoteSafetyState" class="control-safety-chip">Checking device</span>
+        </div>
+        <p class="control-copy">Commands expire after 45 seconds and are complete only after the ESP32 acknowledges them.</p>
+        <div class="remote-control-group" aria-describedby="remoteControlStatus">
+          <button class="control-btn control-btn-auto" type="button" data-remote-action="auto"><span class="btn-label">Auto / Resume</span><small>Clear emergency mode</small></button>
+          <button class="control-btn control-btn-on" type="button" data-remote-action="pump_on"><span class="btn-label">Pump ON</span><small>Safety checks apply</small></button>
+          <button class="control-btn control-btn-off" type="button" data-remote-action="pump_off"><span class="btn-label">Pump OFF</span><small>Stop current run</small></button>
+          <button class="control-btn control-btn-reset" type="button" data-remote-action="reset_cooldown"><span class="btn-label">Reset cooldown</span><small>Confirmation required</small></button>
+          <button class="control-btn control-btn-emergency" type="button" data-remote-action="emergency_off"><span class="btn-label">Emergency OFF</span><small>Latch pump off</small></button>
+        </div>
+        <div id="remoteControlStatus" class="acknowledgement-rail neutral" role="status" aria-live="polite">
+          <span class="ack-dot"></span><span>Ready to send a command</span>
+        </div>
+        <p class="control-warning">Remote access requires protected Firebase Authentication and database rules before public deployment.</p>
+      </section>
+
       <section id="errorPanel" class="panel error-panel" hidden>
         <div class="panel-heading">
           <p class="eyebrow">Error</p>

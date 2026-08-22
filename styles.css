@@ -604,10 +604,76 @@ dd {
 /* ===== REMOTE CONTROL PANEL ===== */
 .remote-control-group {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 1rem;
   padding: 1.5rem 0;
 }
+
+.remote-control-panel {
+  margin-top: 1.25rem;
+}
+.control-panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.control-panel-heading h2 {
+  margin: 0;
+}
+.control-copy,
+.control-warning {
+  color: var(--muted);
+  margin: 0.55rem 0 0;
+}
+.control-warning {
+  font-size: 0.78rem;
+}
+.control-safety-chip {
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.1);
+  color: #b45309;
+  border-radius: 999px;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.control-safety-chip.ready {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(16, 185, 129, 0.1);
+  color: #047857;
+}
+.control-btn small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.control-btn-emergency {
+  background: rgba(127, 29, 29, 0.1);
+  border-color: rgba(220, 38, 38, 0.45);
+}
+.acknowledgement-rail {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 48px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(248, 250, 252, 0.72);
+  border-radius: 14px;
+  padding: 0.8rem 1rem;
+  font-weight: 700;
+}
+.ack-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+.acknowledgement-rail.pending .ack-dot {background:#f59e0b;box-shadow:0 0 0 5px rgba(245,158,11,.13);animation:pulseOffline 1.2s infinite}
+.acknowledgement-rail.success .ack-dot {background:#10b981;box-shadow:0 0 0 5px rgba(16,185,129,.13)}
+.acknowledgement-rail.error .ack-dot {background:#ef4444;box-shadow:0 0 0 5px rgba(239,68,68,.13)}
+body.system-offline .remote-control-panel {opacity:1!important;filter:none!important;pointer-events:auto!important}
 .control-btn {
   display: flex;
   flex-direction: column;
@@ -677,6 +743,11 @@ dd {
   border-color: #dc2626;
   box-shadow: 0 10px 20px rgba(239, 68, 68, 0.3);
 }
+.control-btn.active.control-btn-emergency {
+  background: linear-gradient(135deg, #991b1b, #450a0a);
+  border-color: #dc2626;
+  box-shadow: 0 10px 20px rgba(153, 27, 27, 0.35);
+}
 .control-btn.active .btn-label {
   color: white;
 }
@@ -686,8 +757,11 @@ dd {
 
 @media (max-width: 680px) {
   .remote-control-group {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
   }
+  .control-btn-emergency {grid-column:1/-1}
+  .control-panel-heading {display:block}
+  .control-safety-chip {display:inline-block;margin-top:.75rem}
 }
 
 
