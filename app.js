@@ -1,6 +1,7 @@
 const FIREBASE_URL = window.GREENHOUSE_CONFIG?.firebaseUrl;
 const CONTROL_COMMAND_URL = window.GREENHOUSE_CONFIG?.controlCommandUrl;
 const CONTROL_ACK_URL = window.GREENHOUSE_CONFIG?.controlAckUrl;
+const CONTROL_PASSWORD_HASH = window.GREENHOUSE_CONFIG?.controlPasswordHash;
 
 if (!FIREBASE_URL) {
   throw new Error("Missing GREENHOUSE_CONFIG.firebaseUrl in app-config.js");
@@ -17,6 +18,7 @@ let latestSignature = localStorage.getItem(SIGNATURE_STORAGE_KEY) || "";
 let lastDataChangedAt = Number(localStorage.getItem(CHANGED_AT_STORAGE_KEY)) || 0;
 let realtimeStarted = false;
 let remoteCommandPending = false;
+let controlsUnlocked = false;
 
 const elements = {
   loginScreen: document.querySelector("#loginScreen"),
@@ -46,6 +48,12 @@ const elements = {
   humidityDrops: document.querySelector("#humidityDrops"),
   pumpAnimIcon: document.querySelector("#pumpAnimIcon"),
   weatherIcon: document.querySelector("#weatherIcon"),
+  controlAccessGate: document.querySelector("#controlAccessGate"),
+  controlUnlockForm: document.querySelector("#controlUnlockForm"),
+  controlPasswordInput: document.querySelector("#controlPasswordInput"),
+  controlUnlockError: document.querySelector("#controlUnlockError"),
+  remoteControlContent: document.querySelector("#remoteControlContent"),
+  lockRemoteControls: document.querySelector("#lockRemoteControls"),
   remoteControlStatus: document.querySelector("#remoteControlStatus"),
   remoteSafetyState: document.querySelector("#remoteSafetyState"),
   remoteButtons: [...document.querySelectorAll("[data-remote-action]")],
@@ -70,6 +78,13 @@ function formatNumber(value, digits = 1) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "--";
   return Number.isInteger(number) ? String(number) : number.toFixed(digits);
+}
+
+function formatDuration(seconds) {
+  const totalSeconds = Math.max(0, Math.ceil(Number(seconds) || 0));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  return hours > 0 ? `${hours}h ${String(minutes).padStart(2, "0")}m` : `${minutes}m`;
 }
 
 function formatBooleanStatus(value, trueText = "ON", falseText = "OFF") {
@@ -186,6 +201,12 @@ function booleanValue(value) {
 
 function updateRemoteControlState(readings = getReadings(latestData || {})) {
   if (!elements.remoteButtons?.length) return;
+  if (!controlsUnlocked) {
+    elements.remoteButtons.forEach((button) => {
+      button.disabled = true;
+    });
+    return;
+  }
   const fresh = isRemoteTelemetryFresh();
   const configured = Boolean(CONTROL_COMMAND_URL && CONTROL_ACK_URL);
   const pumpOn = booleanValue(readings.pumpStatus) || String(readings.pumpStatus).toLowerCase() === "on";
@@ -246,7 +267,7 @@ async function waitForCommandAck(id) {
 }
 
 async function sendRemoteCommand(action) {
-  if (remoteCommandPending) return;
+  if (remoteCommandPending || !controlsUnlocked) return;
   const safeStop = action === "pump_off" || action === "emergency_off";
   if (!safeStop && !isRemoteTelemetryFresh()) {
     setRemoteStatus("The device is offline or stale; pump-start commands are disabled.", "error");
@@ -379,7 +400,9 @@ function renderDashboard(data) {
   const pumpCooldownEl = document.getElementById("pumpCooldownValue");
   if (pumpCooldownEl) {
     const isCoolingDown = readings.pumpCooldown === true || String(readings.pumpCooldown).toLowerCase() === "true";
-    pumpCooldownEl.textContent = isCoolingDown ? "Active (5hr)" : "Inactive";
+    pumpCooldownEl.textContent = isCoolingDown
+      ? `Active (${formatDuration(readings.cooldownRemaining)})`
+      : "Inactive";
     pumpCooldownEl.style.color = isCoolingDown ? "#f59e0b" : "inherit";
   }
 
@@ -493,9 +516,47 @@ function startRealtimeUpdates() {
   setInterval(loadData, 300000);
 }
 
+function lockRemoteControlPanel() {
+  controlsUnlocked = false;
+  remoteCommandPending = false;
+  elements.controlAccessGate.hidden = false;
+  elements.remoteControlContent.hidden = true;
+  elements.controlPasswordInput.value = "";
+  elements.controlUnlockError.textContent = "";
+  updateRemoteControlState();
+}
+
+async function hashControlPassword(value) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function unlockRemoteControlPanel(event) {
+  event.preventDefault();
+  const enteredPassword = elements.controlPasswordInput.value;
+  const enteredHash = await hashControlPassword(enteredPassword);
+  if (!CONTROL_PASSWORD_HASH || enteredHash !== CONTROL_PASSWORD_HASH) {
+    elements.controlUnlockError.textContent = "Incorrect control password.";
+    elements.controlPasswordInput.select();
+    return;
+  }
+
+  controlsUnlocked = true;
+  elements.controlUnlockError.textContent = "";
+  elements.controlPasswordInput.value = "";
+  elements.controlAccessGate.hidden = true;
+  elements.remoteControlContent.hidden = false;
+  updateRemoteControlState();
+  elements.lockRemoteControls.focus();
+}
+
 function showDashboard() {
   elements.loginScreen.hidden = true;
   elements.appShell.hidden = false;
+  lockRemoteControlPanel();
   loadData();
   startRealtimeUpdates();
 }
@@ -525,8 +586,12 @@ elements.loginForm.addEventListener("submit", (event) => {
 
 elements.logoutButton.addEventListener("click", () => {
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  lockRemoteControlPanel();
   showLogin();
 });
+
+elements.controlUnlockForm.addEventListener("submit", unlockRemoteControlPanel);
+elements.lockRemoteControls.addEventListener("click", lockRemoteControlPanel);
 
 elements.remoteButtons.forEach((button) => {
   button.addEventListener("click", () => sendRemoteCommand(button.dataset.remoteAction));

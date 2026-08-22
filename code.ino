@@ -77,6 +77,9 @@ const char* uploadState = "Waiting for first sample";
 String backupWifiSsid = "";
 String backupWifiPassword = "";
 bool wifiBackupConfigured = false;
+// Wi-Fi internet backup is opt-in. The local Greenhouse_Portal access point
+// remains available even while this setting is OFF.
+bool wifiBackupEnabled = false;
 bool wifiBackupActive = false;
 bool cellularSuspendedForWifi = false;
 unsigned long lastWifiAttempt = 0;
@@ -178,6 +181,8 @@ const unsigned long maxRunTime = 120000;       // 2 minutes in ms
 const unsigned long cooldownTime = 18000000;   // 5 hours in ms
 unsigned long lastAutoRunTime = -cooldownTime; // Prevents cooldown on boot
 int64_t cooldownUntilUnix = 0;
+unsigned long cooldownFallbackStartedMs = 0;
+bool cooldownFallbackRunning = false;
 
 // ===== DRY DELAY PROTECTION =====
 unsigned long dryStartTime = 0;
@@ -205,10 +210,15 @@ const unsigned long backlogUploadInterval = 2000UL;
 const char* SETTINGS_NAMESPACE = "greenhouse";
 const char* FIREBASE_TELEMETRY_URL =
   "https://soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app/greenhouse.json";
+const char* FIREBASE_TIME_URL =
+  "https://soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app/greenhouse/system/last_update_server.json";
 const char* CONTROL_COMMAND_URL =
   "https://soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app/control/command.json";
 const char* CONTROL_ACK_URL =
   "https://soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app/control/ack.json";
+// Local controls and automatic watering never depend on cloud commands. Keep
+// this ON so the password-hidden hosted dashboard can send optional commands.
+const bool ENABLE_ONLINE_COMMANDS = true;
 
 // Explicit prototype is required by Arduino's single-file preprocessor because
 // the implementation has a default argument in a later generated section.
@@ -223,7 +233,7 @@ void serviceClockSync() {
   }
 
   unsigned long nowMs = millis();
-  if (WiFi.status() == WL_CONNECTED &&
+  if (wifiBackupEnabled && WiFi.status() == WL_CONNECTED &&
       (!ntpSyncRequested || nowMs - lastNtpAttempt >= clockRetryInterval)) {
     // configTime starts the ESP32 SNTP client without blocking the portal.
     // The stored system clock remains UTC; the portal applies UTC+8 for PHT.
@@ -306,7 +316,7 @@ void setup() {
   server.begin();
   Serial.println("Captive Portal started. Connect to 'Greenhouse_Portal' now!");
 
-  if (wifiBackupConfigured) {
+  if (wifiBackupEnabled && wifiBackupConfigured) {
     connectWifiBackup(true);
   }
 }
@@ -456,7 +466,8 @@ void loop() {
       lastUploadCycle = millis();
       bool cloudRetryDue = !cloudAttempted ||
                            (millis() - lastCloudAttempt >= cloudRetryInterval);
-      bool wifiConnected = WiFi.status() == WL_CONNECTED;
+      bool wifiConnected = wifiBackupEnabled && wifiBackupConfigured &&
+                           WiFi.status() == WL_CONNECTED;
 
       if (wifiConnected && wifiBackupConfigured) {
         preferWifiAndSuspendCellular();
@@ -464,10 +475,10 @@ void loop() {
         restoreCellularAfterWifiLoss();
       }
 
-      if (!cloudAvailable && wifiBackupConfigured && !wifiConnected) {
+      if (!cloudAvailable && wifiBackupEnabled && wifiBackupConfigured && !wifiConnected) {
         wifiConnected = connectWifiBackup(false);
       }
-      if (wifiConnected && wifiBackupConfigured) preferWifiAndSuspendCellular();
+      if (wifiConnected) preferWifiAndSuspendCellular();
 
       bool modemConnected = cellularActive && modem.isNetworkConnected();
       cloudRetryDue = !cloudAttempted ||
@@ -538,12 +549,16 @@ void persistCooldown() {
     // On time synchronization, conservatively start the full cooldown.
     cooldownUntilUnix = -1;
   }
+  cooldownFallbackStartedMs = lastAutoRunTime;
+  cooldownFallbackRunning = true;
   preferences.putLong64("cooldownUntil", cooldownUntilUnix);
 }
 
 void clearCooldown() {
   cooldownUntilUnix = 0;
   lastAutoRunTime = -cooldownTime;
+  cooldownFallbackStartedMs = 0;
+  cooldownFallbackRunning = false;
   preferences.putLong64("cooldownUntil", 0);
 }
 
@@ -564,11 +579,24 @@ bool cooldownActive() {
         unsigned long remainingMs = cooldownTime - elapsedMs;
         cooldownUntilUnix = (int64_t)time(nullptr) +
                             (int64_t)((remainingMs + 999UL) / 1000UL);
+        cooldownFallbackRunning = false;
         preferences.putLong64("cooldownUntil", cooldownUntilUnix);
       }
       return true;
     }
-    if (!clockIsValid()) return true;
+    if (!clockIsValid()) {
+      if (!cooldownFallbackRunning) {
+        cooldownFallbackStartedMs = millis();
+        cooldownFallbackRunning = true;
+      }
+      unsigned long elapsedMs = millis() - cooldownFallbackStartedMs;
+      if (elapsedMs >= cooldownTime) {
+        clearCooldown();
+        return false;
+      }
+      return true;
+    }
+    cooldownFallbackRunning = false;
     if ((int64_t)time(nullptr) < cooldownUntilUnix) return true;
     clearCooldown();
     return false;
@@ -588,7 +616,12 @@ unsigned long cooldownRemainingSeconds() {
     return (cooldownTime - elapsedMs + 999UL) / 1000UL;
   }
   // A persisted absolute deadline cannot be evaluated until time returns.
-  if (cooldownUntilUnix > 0) return cooldownTime / 1000UL;
+  if (cooldownUntilUnix > 0) {
+    unsigned long elapsedMs = cooldownFallbackRunning ?
+                              millis() - cooldownFallbackStartedMs : 0;
+    if (elapsedMs >= cooldownTime) return 0;
+    return (cooldownTime - elapsedMs + 999UL) / 1000UL;
+  }
   return (cooldownTime - (millis() - lastAutoRunTime)) / 1000UL;
 }
 
@@ -691,9 +724,16 @@ void loadSettings() {
     // time, so start one conservative full countdown from this boot.
     lastAutoRunTime = millis();
   }
+  if (cooldownUntilUnix != 0 && !clockIsValid()) {
+    cooldownFallbackStartedMs = millis();
+    cooldownFallbackRunning = true;
+  }
   backupWifiSsid = preferences.getString("wifiSsid", "");
   backupWifiPassword = preferences.getString("wifiPass", "");
   wifiBackupConfigured = backupWifiSsid.length() > 0;
+  // Default OFF, including after upgrading from an older sketch that had
+  // saved Wi-Fi credentials but no explicit enable/disable setting.
+  wifiBackupEnabled = preferences.getBool("wifiEnabled", false);
   lastProcessedCommandId = preferences.getString("lastCommand", "");
   lastProcessedIssuedAt = preferences.getLong64("lastIssued", 0);
 
@@ -726,7 +766,7 @@ void saveWifiCredentials(const String &ssid, const String &password) {
 }
 
 bool connectWifiBackup(bool force = false) {
-  if (!wifiBackupConfigured) return false;
+  if (!wifiBackupEnabled || !wifiBackupConfigured) return false;
   if (WiFi.status() == WL_CONNECTED) return true;
   if (wifiConnectionInProgress) return false;
   if (!force && lastWifiAttempt != 0 && millis() - lastWifiAttempt < wifiRetryInterval) return false;
@@ -743,6 +783,12 @@ bool connectWifiBackup(bool force = false) {
 }
 
 void serviceWifiBackup() {
+  if (!wifiBackupEnabled) {
+    wifiConnectionInProgress = false;
+    wifiBackupActive = false;
+    return;
+  }
+
   if (WiFi.status() == WL_CONNECTED) {
     if (wifiConnectionInProgress) {
       Serial.print("Wi-Fi backup connected: ");
@@ -752,6 +798,7 @@ void serviceWifiBackup() {
     if (wifiBackupConfigured) preferWifiAndSuspendCellular();
     return;
   }
+  wifiBackupActive = false;
   if (wifiConnectionInProgress && millis() - wifiConnectionStarted >= wifiConnectTimeout) {
     wifiConnectionInProgress = false;
     uploadState = "Wi-Fi unavailable; waiting to retry";
@@ -764,19 +811,16 @@ void serviceWifiBackup() {
 }
 
 void preferWifiAndSuspendCellular() {
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (!wifiBackupEnabled || !wifiBackupConfigured ||
+      WiFi.status() != WL_CONNECTED) return;
 
+  bool wasAlreadyReady = wifiBackupActive;
   wifiBackupActive = true;
-  if (!cellularSuspendedForWifi) {
-    if (cellularActive) {
-      Serial.println("Wi-Fi connected. Disconnecting cellular packet data...");
-      modem.gprsDisconnect();
-    }
-    cellularActive = false;
-    cellularSuspendedForWifi = true;
-    cloudAvailable = false;
-    cloudAttempted = false;
-    Serial.println("Wi-Fi is now the primary Firebase connection.");
+  // Keep cellular registered and attached. Wi-Fi is a true fallback and must
+  // never replace TNT merely because it received a local IP address.
+  cellularSuspendedForWifi = false;
+  if (!wasAlreadyReady) {
+    Serial.println("Wi-Fi backup ready; TNT cellular remains primary.");
   }
 }
 
@@ -810,19 +854,20 @@ const char PORTAL_HTML[] PROGMEM = R"PORTAL(
 <h2>Pump control</h2><section class="panel"><div class="buttons"><button data-mode="auto">Auto / Resume</button><button class="on" data-mode="manual" data-state="on">Pump ON</button><button class="off" data-mode="manual" data-state="off">Pump OFF</button><button class="reset" data-mode="reset_cd">Reset cooldown</button><button class="emergency" data-mode="emergency_off">Emergency OFF</button></div><p id="message" class="message" aria-live="polite"></p><p class="hint">All starts are still subject to rain, sensor, cooldown and two-minute safety protection. Auto / Resume clears a latched emergency stop.</p></section>
 <h2>Automation thresholds</h2><section class="panel"><div class="form"><div class="field"><label for="onThreshold">Turn pump on below (%)</label><input id="onThreshold" type="number" min="0" max="99"></div><div class="field"><label for="offThreshold">Turn pump off at (%)</label><input id="offThreshold" type="number" min="1" max="100"></div></div><button id="saveThresholds" class="save">Save thresholds</button><p class="hint">Required: 0 <= ON threshold < OFF threshold <= 100.</p></section>
 <h2>Sensor calibration</h2><section class="panel"><div class="form"><div class="field"><label for="soilWet">Soil wet raw value</label><input id="soilWet" type="number" min="1" max="4094"></div><div class="field"><label for="soilDry">Soil dry raw value</label><input id="soilDry" type="number" min="2" max="4095"></div><div class="field"><label for="rainThreshold">Rain threshold</label><input id="rainThreshold" type="number" min="1" max="4094"></div></div><button id="saveCalibration" class="save">Save calibration</button><p class="hint">4095 is accepted as a valid fully-dry reading. Required: soil wet < soil dry.</p></section>
-<h2>Wi-Fi cloud backup</h2><section class="panel"><div class="wifi-picker"><div class="field"><label for="wifiNetworks">Nearby 2.4 GHz networks</label><select id="wifiNetworks"><option value="">Scan to find Wi-Fi networks</option></select></div><button id="scanWifi" class="scan" type="button">Scan networks</button></div><div class="form"><div class="field"><label for="wifiSsid">Selected Wi-Fi name (SSID)</label><input id="wifiSsid" maxlength="32" autocomplete="off"></div><div class="field"><label for="wifiPassword">Wi-Fi password</label><input id="wifiPassword" type="password" minlength="8" maxlength="63" autocomplete="new-password" placeholder="Leave blank to keep saved password"></div></div><button id="saveWifi" class="save">Save and connect Wi-Fi</button><p id="wifiStatus" class="hint">Not configured</p><p class="hint">ESP32 supports 2.4 GHz Wi-Fi only. Choose a scanned network or enter a hidden SSID manually. Greenhouse_Portal stays available while connecting.</p></section></main>
+<h2>Wi-Fi cloud backup</h2><section class="panel"><button id="toggleWifi" class="scan" type="button">Enable Wi-Fi backup</button><p id="wifiModeStatus" class="hint">OFF - TNT cellular is primary</p><div class="wifi-picker"><div class="field"><label for="wifiNetworks">Nearby 2.4 GHz networks</label><select id="wifiNetworks"><option value="">Scan to find Wi-Fi networks</option></select></div><button id="scanWifi" class="scan" type="button">Scan networks</button></div><div class="form"><div class="field"><label for="wifiSsid">Selected Wi-Fi name (SSID)</label><input id="wifiSsid" maxlength="32" autocomplete="off"></div><div class="field"><label for="wifiPassword">Wi-Fi password</label><input id="wifiPassword" type="password" minlength="8" maxlength="63" autocomplete="new-password" placeholder="Leave blank to keep saved password"></div></div><button id="saveWifi" class="save">Save Wi-Fi credentials</button><p id="wifiStatus" class="hint">Not configured</p><p class="hint">Wi-Fi internet backup is OFF by default. The Greenhouse_Portal hotspot remains available for local monitoring and pump control even when this backup is OFF.</p></section></main>
 <script>
-var LOCAL_ORIGIN='http://192.168.4.1',busy=false,wifiSelectionDirty=false,refreshing=false,cooldownEnd=0,scheduleEnd=0,nextScheduleLabel='',lastLive=0;function $(id){return document.getElementById(id)}function editable(id){return document.activeElement!==$(id)}function text(id,value){$(id).textContent=value}function setMessage(value,error){text('message',value);$('message').className=error?'message error':'message'}function setBusy(value){busy=value;var buttons=document.getElementsByTagName('button');for(var i=0;i<buttons.length;i++)buttons[i].disabled=value}
+var LOCAL_ORIGIN='http://192.168.4.1',busy=false,wifiSelectionDirty=false,wifiEnabled=false,refreshing=false,cooldownEnd=0,scheduleEnd=0,nextScheduleLabel='',lastLive=0;function $(id){return document.getElementById(id)}function editable(id){return document.activeElement!==$(id)}function text(id,value){$(id).textContent=value}function setMessage(value,error){text('message',value);$('message').className=error?'message error':'message'}function setBusy(value){busy=value;var buttons=document.getElementsByTagName('button');for(var i=0;i<buttons.length;i++)buttons[i].disabled=value}
 function encode(params){var parts=[];for(var key in params)if(params.hasOwnProperty(key))parts.push(encodeURIComponent(key)+'='+encodeURIComponent(params[key]));return parts.join('&')}
 function request(path,method,body,done){var xhr=new XMLHttpRequest(),finished=false;function finish(error,response){if(finished)return;finished=true;done(error,response)}xhr.open(method||'GET',LOCAL_ORIGIN+path,true);xhr.timeout=path==='/wifi-scan'?18000:6000;xhr.setRequestHeader('Cache-Control','no-cache');if(method==='POST')xhr.setRequestHeader('Content-Type','application/x-www-form-urlencoded');xhr.onreadystatechange=function(){if(xhr.readyState===4)finish(xhr.status>=200&&xhr.status<300?null:(xhr.responseText||'HTTP '+xhr.status),xhr.responseText)};xhr.ontimeout=function(){finish('Local ESP32 request timed out','')};xhr.onerror=function(){finish('Cannot reach 192.168.4.1','')};xhr.send(body||null)}
 function duration(seconds){seconds=Math.max(0,Math.ceil(Number(seconds)||0));var h=Math.floor(seconds/3600),m=Math.floor(seconds%3600/60),s=seconds%60;return h+'h '+('0'+m).slice(-2)+'m '+('0'+s).slice(-2)+'s'}
-function refresh(){if(refreshing)return;refreshing=true;request('/data','GET','',function(error,body){refreshing=false;if(error){text('connection','Offline');$('connection').className='online bad';return}try{var d=JSON.parse(body),remaining=Math.max(0,Number(d.cooldownRemainingSeconds)||0);lastLive=Date.now();cooldownEnd=d.cooldown?Date.now()+remaining*1000:0;scheduleEnd=d.clockValid?Date.now()+Math.max(0,Number(d.nextScheduleSeconds)||0)*1000:0;nextScheduleLabel=d.nextSchedule||'';text('soil',d.soilPercent+'% ('+d.soilRaw+')');text('temp',d.dhtError?'Sensor error':d.temperature+' C');text('hum',d.dhtError?'Sensor error':d.humidity+'%');text('rain',d.rainDetected?'Detected':'Clear');text('pump',d.pumpState?'ON':'OFF');text('mode',d.emergencyStop?'EMERGENCY':(d.manualMode?'MANUAL':'AUTO'));text('network',d.network);text('clock',d.clockValid?d.philippineTime:d.clockSyncState);text('nextSchedule',d.clockValid?duration(d.nextScheduleSeconds)+' to '+nextScheduleLabel:d.nextSchedule);text('wifiStatus',d.wifiConnecting?'Connecting to '+d.wifiSsid:(d.wifiConnected?'Connected to '+d.wifiSsid:(d.wifiConfigured?'Saved: '+d.wifiSsid+' (waiting)':'Not configured')));text('uploadState',d.uploadState);text('queueHealth',d.queueDepth+' / '+d.queueCapacity+(d.droppedRecords?' · '+d.droppedRecords+' replaced':''));text('heapHealth',Math.round(d.freeHeap/1024)+' KB / '+Math.round(d.minimumFreeHeap/1024)+' KB');text('deviceHealth',Math.floor(d.uptimeSeconds/3600)+'h · reset '+d.resetReason);text('uploadPill',d.cloudAvailable?'Firebase online':d.uploadState);$('uploadPill').className='pill '+(d.cloudAvailable?'good':'warn');text('queuePill','Queue '+d.queueDepth+'/'+d.queueCapacity);$('queuePill').className='pill '+(d.queueDepth>=d.queueCapacity?'warn':'good');text('wifiPill',d.wifiConnected?'Wi-Fi '+d.wifiRssi+' dBm':(d.wifiConnecting?'Wi-Fi connecting':'Wi-Fi offline'));$('wifiPill').className='pill '+(d.wifiConnected?'good':'warn');text('connection',d.cloudAvailable?'Live + cloud':'Live local');$('connection').className='online '+(d.cloudAvailable?'ok':'');var fault=d.emergencyStop||d.rainDetected||d.dhtError||d.soilFault;$('safetyAlert').className=fault?'alert show':'alert';text('safetyAlert',d.emergencyStop?'Emergency stop is latched.':d.rainDetected?'Rain detected; pump starts are blocked.':d.dhtError?'DHT22 fault; pump starts are blocked.':d.soilFault?'Soil sensor fault; pump starts are blocked.':'');if(editable('onThreshold'))$('onThreshold').value=d.onThresh;if(editable('offThreshold'))$('offThreshold').value=d.offThresh;if(editable('soilWet'))$('soilWet').value=d.soilWet;if(editable('soilDry'))$('soilDry').value=d.soilDry;if(editable('rainThreshold'))$('rainThreshold').value=d.rainThreshold;if(!wifiSelectionDirty&&editable('wifiSsid'))$('wifiSsid').value=d.wifiSsid||''}catch(parseError){setMessage('Invalid local sensor response',true)}})}
+function refresh(){if(refreshing)return;refreshing=true;request('/data','GET','',function(error,body){refreshing=false;if(error){text('connection','Offline');$('connection').className='online bad';return}try{var d=JSON.parse(body),remaining=Math.max(0,Number(d.cooldownRemainingSeconds)||0);lastLive=Date.now();wifiEnabled=!!d.wifiEnabled;cooldownEnd=d.cooldown?Date.now()+remaining*1000:0;scheduleEnd=d.clockValid?Date.now()+Math.max(0,Number(d.nextScheduleSeconds)||0)*1000:0;nextScheduleLabel=d.nextSchedule||'';text('soil',d.soilPercent+'% ('+d.soilRaw+')');text('temp',d.dhtError?'Sensor error':d.temperature+' C');text('hum',d.dhtError?'Sensor error':d.humidity+'%');text('rain',d.rainDetected?'Detected':'Clear');text('pump',d.pumpState?'ON':'OFF');text('mode',d.emergencyStop?'EMERGENCY':(d.manualMode?'MANUAL':'AUTO'));text('network',d.network);text('clock',d.clockValid?d.philippineTime:d.clockSyncState);text('nextSchedule',d.clockValid?duration(d.nextScheduleSeconds)+' to '+nextScheduleLabel:d.nextSchedule);text('toggleWifi',wifiEnabled?'Disable Wi-Fi backup':'Enable Wi-Fi backup');text('wifiModeStatus',wifiEnabled?'ON - Wi-Fi backup may be used':'OFF - TNT cellular is primary');text('wifiStatus',d.wifiConnecting?'Connecting to '+d.wifiSsid:(d.wifiConnected?'Connected to '+d.wifiSsid:(d.wifiConfigured?'Saved: '+d.wifiSsid+(wifiEnabled?' (waiting)':' (backup OFF)'):'Not configured')));text('uploadState',d.uploadState);text('queueHealth',d.queueDepth+' / '+d.queueCapacity+(d.droppedRecords?' · '+d.droppedRecords+' replaced':''));text('heapHealth',Math.round(d.freeHeap/1024)+' KB / '+Math.round(d.minimumFreeHeap/1024)+' KB');text('deviceHealth',Math.floor(d.uptimeSeconds/3600)+'h · reset '+d.resetReason);text('uploadPill',d.cloudAvailable?'Firebase online':d.uploadState);$('uploadPill').className='pill '+(d.cloudAvailable?'good':'warn');text('queuePill','Queue '+d.queueDepth+'/'+d.queueCapacity);$('queuePill').className='pill '+(d.queueDepth>=d.queueCapacity?'warn':'good');text('wifiPill',wifiEnabled?(d.wifiConnected?'Wi-Fi '+d.wifiRssi+' dBm':(d.wifiConnecting?'Wi-Fi connecting':'Wi-Fi waiting')):'Wi-Fi backup OFF');$('wifiPill').className='pill '+(d.wifiConnected?'good':'warn');text('connection',d.cloudAvailable?'Live + cloud':'Live local');$('connection').className='online '+(d.cloudAvailable?'ok':'');var fault=d.emergencyStop||d.rainDetected||d.dhtError||d.soilFault;$('safetyAlert').className=fault?'alert show':'alert';text('safetyAlert',d.emergencyStop?'Emergency stop is latched.':d.rainDetected?'Rain detected; pump starts are blocked.':d.dhtError?'DHT22 fault; pump starts are blocked.':d.soilFault?'Soil sensor fault; pump starts are blocked.':'');if(editable('onThreshold'))$('onThreshold').value=d.onThresh;if(editable('offThreshold'))$('offThreshold').value=d.offThresh;if(editable('soilWet'))$('soilWet').value=d.soilWet;if(editable('soilDry'))$('soilDry').value=d.soilDry;if(editable('rainThreshold'))$('rainThreshold').value=d.rainThreshold;if(!wifiSelectionDirty&&editable('wifiSsid'))$('wifiSsid').value=d.wifiSsid||''}catch(parseError){setMessage('Invalid local sensor response',true)}})}
 function update(params,confirmText){if(busy)return;if(confirmText&&!confirm(confirmText))return;setBusy(true);setMessage('Applying...',false);request('/set','POST',encode(params),function(error){setBusy(false);if(error){setMessage(error,true);return}setMessage('Saved and applied by ESP32.',false);refresh()})}
 var modeButtons=document.querySelectorAll('[data-mode]');for(var i=0;i<modeButtons.length;i++)modeButtons[i].onclick=function(){var mode=this.getAttribute('data-mode'),state=this.getAttribute('data-state')||'',question=mode==='emergency_off'?'Stop the pump and latch emergency mode?':mode==='reset_cd'?'Reset the five-hour safety cooldown?':'';update({mode:mode,state:state},question)};
 $('saveThresholds').onclick=function(){var on=Number($('onThreshold').value),off=Number($('offThreshold').value);if(Math.floor(on)!==on||Math.floor(off)!==off||on<0||off>100||on>=off){setMessage('Thresholds must satisfy 0 <= ON < OFF <= 100.',true);return}update({on_thresh:on,off_thresh:off},'')};
 $('saveCalibration').onclick=function(){var wet=Number($('soilWet').value),dry=Number($('soilDry').value),rain=Number($('rainThreshold').value);if(Math.floor(wet)!==wet||Math.floor(dry)!==dry||Math.floor(rain)!==rain||wet<=0||wet>=dry||dry>4095||rain<=0||rain>=4095){setMessage('Calibration values are invalid.',true);return}update({soil_wet:wet,soil_dry:dry,rain_threshold:rain},'')};
 function scanWifi(){if(busy)return;$('scanWifi').disabled=true;text('scanWifi','Scanning 2.4 GHz...');request('/wifi-scan','GET','',function(error,body){if(error){$('scanWifi').disabled=false;text('scanWifi','Scan networks');setMessage(error,true);return}try{var result=JSON.parse(body),select=$('wifiNetworks');while(select.options.length)select.remove(0);if(!result.networks||!result.networks.length){var empty=document.createElement('option');empty.value='';empty.text='No 2.4 GHz networks found';select.add(empty);setMessage(result.error?'Wi-Fi scan failed (code '+result.error+'). Check Serial Monitor.':'No networks found. Move closer and scan again.',true)}else{var prompt=document.createElement('option');prompt.value='';prompt.text='Select a network...';select.add(prompt);for(var i=0;i<result.networks.length;i++){var network=result.networks[i],option=document.createElement('option'),quality=network.rssi>=-55?'Strong':network.rssi>=-70?'Good':'Weak';option.value=network.ssid;option.text=network.ssid+' - '+quality+' ('+network.rssi+' dBm) '+(network.secure?'[Locked]':'[Open]');select.add(option)}select.selectedIndex=0;setMessage(result.networks.length+' network(s) found. Choose one below.',false)}}catch(parseError){setMessage('Invalid Wi-Fi scan response',true)}$('scanWifi').disabled=false;text('scanWifi','Scan again')})}
 $('wifiNetworks').onchange=function(){if(this.value){wifiSelectionDirty=true;$('wifiSsid').value=this.value}};$('wifiSsid').oninput=function(){wifiSelectionDirty=true};$('scanWifi').onclick=scanWifi;
+$('toggleWifi').onclick=function(){update({wifi_enabled:wifiEnabled?'0':'1'},wifiEnabled?'Disable Wi-Fi internet backup and keep TNT cellular primary?':'Enable the saved Wi-Fi internet backup?')};
 $('saveWifi').onclick=function(){var ssid=$('wifiSsid').value.replace(/^\s+|\s+$/g,''),password=$('wifiPassword').value;if(!ssid||ssid.length>32){setMessage('Enter a valid Wi-Fi name.',true);return}if(password&&password.length<8){setMessage('Wi-Fi password must be at least 8 characters.',true);return}update({wifi_ssid:ssid,wifi_password:password},'');$('wifiPassword').value=''};
 function tick(){text('cooldown',cooldownEnd?duration((cooldownEnd-Date.now())/1000):'Ready');if(scheduleEnd)text('nextSchedule',duration((scheduleEnd-Date.now())/1000)+' to '+nextScheduleLabel);if(lastLive&&Date.now()-lastLive>7000){text('connection','Connection stale');$('connection').className='online bad'}}refresh();setInterval(refresh,2000);setInterval(tick,1000);
 </script></body></html>
@@ -909,17 +954,25 @@ void handleData() {
   String nextSchedule;
   unsigned long nextScheduleSeconds = 0;
   getPhilippineScheduleStatus(philippineTime, nextSchedule, nextScheduleSeconds);
+  bool recentCloudSuccess = lastUploadSuccessMs != 0 &&
+                            millis() - lastUploadSuccessMs <= 60000UL;
+  bool portalCloudAvailable = cloudAvailable || recentCloudSuccess;
+  String portalUploadState = uploadState;
+  if (!cloudAvailable && recentCloudSuccess) {
+    portalUploadState = "Recent upload successful; retrying latest sample";
+  }
   String json = "{";
-  String localNetworkStatus = wifiBackupActive && WiFi.status() == WL_CONNECTED ?
-                              (cloudAvailable ? "Wi-Fi + cloud" : "Wi-Fi; cloud unavailable") :
-                              (!cellularActive ? "Cellular disconnected" :
-                              (cloudAvailable ? "Cellular + cloud" : "Cellular; cloud unavailable"));
+  String localNetworkStatus = cellularActive ?
+                              (portalCloudAvailable ? "TNT cellular + cloud" : "TNT cellular; cloud unavailable") :
+                              (wifiBackupEnabled && wifiBackupActive && WiFi.status() == WL_CONNECTED ?
+                              (portalCloudAvailable ? "Wi-Fi backup + cloud" : "Wi-Fi backup; cloud unavailable") :
+                              "Cellular disconnected");
   json += "\"network\":\"" + localNetworkStatus + "\",";
-  json += "\"cloudAvailable\":" + String(cloudAvailable ? "true" : "false") + ",";
+  json += "\"cloudAvailable\":" + String(portalCloudAvailable ? "true" : "false") + ",";
   json += "\"lastUploadSucceeded\":" + String(lastUploadSucceeded ? "true" : "false") + ",";
   json += "\"secondsSinceUploadSuccess\":" + String(lastUploadSuccessMs == 0 ? -1L : (long)((millis() - lastUploadSuccessMs) / 1000UL)) + ",";
   json += "\"uploadFailures\":" + String(consecutiveUploadFailures) + ",";
-  json += "\"uploadState\":\"" + String(uploadState) + "\",";
+  json += "\"uploadState\":\"" + portalUploadState + "\",";
   json += "\"queueDepth\":" + String(telemetryQueueCount) + ",";
   json += "\"queueCapacity\":" + String(TELEMETRY_QUEUE_SIZE) + ",";
   json += "\"droppedRecords\":" + String(droppedTelemetryRecords) + ",";
@@ -935,7 +988,8 @@ void handleData() {
   json += "\"nextSchedule\":\"" + nextSchedule + "\",";
   json += "\"nextScheduleSeconds\":" + String(nextScheduleSeconds) + ",";
   json += "\"wifiConfigured\":" + String(wifiBackupConfigured ? "true" : "false") + ",";
-  json += "\"wifiConnected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
+  json += "\"wifiEnabled\":" + String(wifiBackupEnabled ? "true" : "false") + ",";
+  json += "\"wifiConnected\":" + String(wifiBackupEnabled && WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
   json += "\"wifiSsid\":\"" + escapeJsonString(backupWifiSsid) + "\",";
   if (currentDhtError) {
     json += "\"temperature\":null,\"humidity\":null,";
@@ -1117,13 +1171,42 @@ void handleSet() {
     } else {
       saveWifiCredentials(requestedSsid, requestedPassword);
       wifiBackupActive = false;
-      cloudAvailable = false;
-      cloudAttempted = false;
       WiFi.disconnect(false, false);
       wifiConnectionInProgress = false;
       lastWifiAttempt = 0;
-      connectWifiBackup(true);
-      response = "Wi-Fi saved; connection started";
+      if (wifiBackupEnabled) {
+        connectWifiBackup(true);
+        response = "Wi-Fi saved; connection started";
+      } else {
+        response = "Wi-Fi saved; backup remains OFF";
+      }
+    }
+  }
+
+  if (server.hasArg("wifi_enabled") && statusCode == 200) {
+    String requestedState = server.arg("wifi_enabled");
+    if (requestedState != "0" && requestedState != "1") {
+      response = "Invalid Wi-Fi state";
+      statusCode = 400;
+    } else if (requestedState == "1" && !wifiBackupConfigured) {
+      response = "Save Wi-Fi credentials before enabling the backup";
+      statusCode = 409;
+    } else {
+      wifiBackupEnabled = requestedState == "1";
+      preferences.putBool("wifiEnabled", wifiBackupEnabled);
+      wifiConnectionInProgress = false;
+      lastWifiAttempt = 0;
+
+      if (wifiBackupEnabled) {
+        connectWifiBackup(true);
+        response = "Wi-Fi backup enabled; connecting";
+      } else {
+        WiFi.disconnect(false, false);
+        wifiBackupActive = false;
+        if (cellularSuspendedForWifi) restoreCellularAfterWifiLoss();
+        lastCellularReconnectAttempt = 0;
+        response = "Wi-Fi backup disabled; TNT cellular remains primary";
+      }
     }
   }
   server.sendHeader("Cache-Control", "no-store");
@@ -1233,7 +1316,7 @@ void syncCellularTime() {
       Serial.print(month3);
       Serial.print("-");
       Serial.println(day3);
-      clockSyncState = "Cellular clock invalid; waiting for Wi-Fi time";
+      clockSyncState = "Cellular clock invalid; Firebase fallback pending";
       return;
     }
 
@@ -1252,7 +1335,7 @@ void syncCellularTime() {
     }
     if (timeSinceEpoch < 1704067200 || timeSinceEpoch > 2082758400) {
       Serial.println("Rejected out-of-range cellular Unix timestamp.");
-      clockSyncState = "Cellular clock invalid; waiting for Wi-Fi time";
+      clockSyncState = "Cellular clock invalid; Firebase fallback pending";
       return;
     }
     struct timeval tv;
@@ -1263,7 +1346,7 @@ void syncCellularTime() {
     clockSyncState = "Cellular network time synchronized";
     Serial.println("Time synced via Cellular Network.");
   } else {
-    clockSyncState = "Cellular time unavailable; waiting for Wi-Fi";
+    clockSyncState = "Cellular time unavailable; Firebase fallback pending";
     Serial.println("Failed to get Cellular Time.");
   }
 }
@@ -1484,6 +1567,40 @@ bool responseContainsHttpSuccess(const String &response, int methodCode) {
          response.indexOf(ok204) >= 0;
 }
 
+int httpActionResponseLength(const String &response, int methodCode) {
+  String marker = "+HTTPACTION: " + String(methodCode) + ",";
+  int actionAt = response.indexOf(marker);
+  if (actionAt < 0) return -1;
+
+  int statusEnd = response.indexOf(',', actionAt + marker.length());
+  if (statusEnd < 0) return -1;
+  int lengthEnd = response.indexOf('\r', statusEnd + 1);
+  if (lengthEnd < 0) lengthEnd = response.indexOf('\n', statusEnd + 1);
+  if (lengthEnd < 0) lengthEnd = response.length();
+
+  String lengthText = response.substring(statusEnd + 1, lengthEnd);
+  lengthText.trim();
+  for (size_t i = 0; i < lengthText.length(); i++) {
+    if (!isDigit(lengthText[i])) return -1;
+  }
+  return lengthText.length() > 0 ? lengthText.toInt() : -1;
+}
+
+String readNativeHttpResponse(int responseLength) {
+  if (responseLength <= 0) return "";
+
+  // A76XX firmware expects an explicit byte range on some revisions. This
+  // avoids the ERROR produced by a bare AT+HTTPREAD command.
+  String readCommand = "AT+HTTPREAD=0," + String(responseLength);
+  String response = sendA7670AT(readCommand, 15000UL, "+HTTPREAD:");
+  if (response.indexOf("+HTTPREAD:") >= 0) return response;
+
+  // Retain compatibility with revisions that implement only the SIM800-style
+  // read form. This fallback is attempted only after the ranged form fails.
+  Serial.println("Ranged HTTPREAD unsupported; trying compatibility form.");
+  return sendA7670AT("AT+HTTPREAD", 15000UL, "+HTTPREAD:");
+}
+
 String extractHttpReadBody(const String &response) {
   int marker = response.indexOf("+HTTPREAD:");
   if (marker < 0) return "";
@@ -1599,7 +1716,8 @@ bool nativeFirebasePatch(const String &url,
   response = sendA7670AT("AT+HTTPACTION=1", 60000UL, "+HTTPACTION:");
   bool success = responseContainsHttpSuccess(response, 1);
 
-  String readResponse = sendA7670AT("AT+HTTPREAD", 15000UL, "+HTTPREAD:");
+  int responseLength = httpActionResponseLength(response, 1);
+  String readResponse = readNativeHttpResponse(responseLength);
   responseBody = extractHttpReadBody(readResponse);
 
   sendA7670AT("AT+HTTPTERM", 3000UL);
@@ -1616,10 +1734,40 @@ bool nativeFirebaseGet(const String &url, String &responseBody) {
 
   String response = sendA7670AT("AT+HTTPACTION=0", 60000UL, "+HTTPACTION:");
   bool success = responseContainsHttpSuccess(response, 0);
-  String readResponse = sendA7670AT("AT+HTTPREAD", 15000UL, "+HTTPREAD:");
+  int responseLength = httpActionResponseLength(response, 0);
+  String readResponse = readNativeHttpResponse(responseLength);
   responseBody = extractHttpReadBody(readResponse);
   sendA7670AT("AT+HTTPTERM", 3000UL);
   return success;
+}
+
+bool syncClockFromFirebaseCellular() {
+  if (clockIsValid() || !cellularActive) return clockIsValid();
+
+  String timestampBody;
+  if (!nativeFirebaseGet(FIREBASE_TIME_URL, timestampBody)) {
+    clockSyncState = "Firebase cellular time retry pending";
+    return false;
+  }
+
+  timestampBody.trim();
+  char *endPointer = NULL;
+  int64_t firebaseMilliseconds = strtoll(timestampBody.c_str(), &endPointer, 10);
+  int64_t firebaseSeconds = firebaseMilliseconds / 1000LL;
+  if (endPointer == timestampBody.c_str() ||
+      firebaseSeconds < 1704067200LL || firebaseSeconds > 2082758400LL) {
+    clockSyncState = "Firebase returned invalid time; retry pending";
+    return false;
+  }
+
+  struct timeval tv;
+  tv.tv_sec = (time_t)firebaseSeconds;
+  tv.tv_usec = 0;
+  settimeofday(&tv, NULL);
+  ntpSyncRequested = false;
+  clockSyncState = "Firebase cellular time synchronized";
+  Serial.println("Time synced from Firebase through TNT cellular.");
+  return true;
 }
 
 bool extractCommandString(const String &json, const String &key, String &value) {
@@ -1789,7 +1937,11 @@ bool sendToFirebase(float temperature, float humidity, bool dhtError,
 
   String rainStatus = rainDetected ? "Rain Detected" : "No Rain";
   String pumpStatus = pumpState ? "ON" : "OFF";
-  bool usingWifi = wifiBackupActive && WiFi.status() == WL_CONNECTED;
+  // Cellular is always preferred. Wi-Fi is used only when cellular is not
+  // currently usable and the user explicitly enabled the backup.
+  bool cellularUsable = cellularActive && modem.isNetworkConnected();
+  bool usingWifi = !cellularUsable && wifiBackupEnabled && wifiBackupActive &&
+                   WiFi.status() == WL_CONNECTED;
   String networkStatus = usingWifi ? "Wi-Fi Connected" :
                          (cellularActive ? "Cellular Connected" : "Disconnected");
 
@@ -1845,12 +1997,14 @@ bool sendToFirebase(float temperature, float humidity, bool dhtError,
   jsonData += "}";
   jsonData += "}";
 
-  const String patchUrl = FIREBASE_TELEMETRY_URL;
+  // Firebase does not need to echo the complete telemetry JSON back to the
+  // modem. A silent PATCH saves cellular data and avoids an unnecessary read.
+  const String patchUrl = String(FIREBASE_TELEMETRY_URL) + "?print=silent";
 
   lastUploadAttemptMs = millis();
   uploadState = usingWifi ? "Uploading through Wi-Fi" : "Uploading through cellular";
 
-  if (cellularActive && !wifiBackupActive) {
+  if (cellularUsable) {
     String patchBody;
     bool patchOK = nativeFirebasePatch(patchUrl, jsonData, patchBody);
 
@@ -1861,7 +2015,8 @@ bool sendToFirebase(float temperature, float humidity, bool dhtError,
       consecutiveUploadFailures = 0;
       uploadState = "Firebase upload successful";
       Serial.println("Firebase cellular PATCH successful.");
-      pollRemoteControlCellular();
+      if (!clockIsValid()) syncClockFromFirebaseCellular();
+      if (ENABLE_ONLINE_COMMANDS) pollRemoteControlCellular();
       return true;
     } else {
       cloudAvailable = false;
@@ -1872,7 +2027,8 @@ bool sendToFirebase(float temperature, float humidity, bool dhtError,
 
       // If Wi-Fi is available, upload the same snapshot immediately. Returning
       // here used to leave the new route idle until the five-minute backoff.
-      if (connectWifiBackup(false) || WiFi.status() == WL_CONNECTED) {
+      if (wifiBackupEnabled &&
+          (connectWifiBackup(false) || WiFi.status() == WL_CONNECTED)) {
         Serial.println("Wi-Fi backup ready. Retrying this upload now.");
         preferWifiAndSuspendCellular();
       } else {
@@ -1931,7 +2087,7 @@ bool sendToFirebase(float temperature, float humidity, bool dhtError,
   }
   httpWiFi.end();
 
-  if (cloudAvailable) pollRemoteControlWifi(wifiClient);
+  if (cloudAvailable && ENABLE_ONLINE_COMMANDS) pollRemoteControlWifi(wifiClient);
 
   wifiClient.stop();
   return cloudAvailable;

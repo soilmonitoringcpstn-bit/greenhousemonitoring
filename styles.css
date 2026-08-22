@@ -602,6 +602,101 @@ dd {
 
 
 /* ===== REMOTE CONTROL PANEL ===== */
+.control-access-gate {
+  display: grid;
+  grid-template-columns: auto minmax(220px, 1fr) minmax(280px, 0.85fr);
+  align-items: center;
+  gap: 1.25rem;
+  min-height: 180px;
+  padding: clamp(1rem, 3vw, 1.6rem);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 20px;
+  background:
+    linear-gradient(120deg, rgba(245, 158, 11, 0.12), rgba(255, 255, 255, 0.82) 46%),
+    var(--card);
+}
+
+.control-gate-mark {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  aspect-ratio: 1;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 22px;
+  color: #92400e;
+  background: rgba(245, 158, 11, 0.14);
+  font-family: var(--font-title);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.control-unlock-form {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.control-unlock-form label {
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.control-unlock-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+}
+
+.control-unlock-row input,
+.control-unlock-row button,
+.control-lock-button {
+  min-height: 44px;
+  border-radius: 12px;
+  font: inherit;
+}
+
+.control-unlock-row input {
+  min-width: 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.control-unlock-row button {
+  padding: 0.75rem 1rem;
+  border: 0;
+  color: white;
+  background: linear-gradient(135deg, #b45309, #d97706);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.control-unlock-error {
+  min-height: 1.25rem;
+  margin: 0;
+  color: #b91c1c;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.control-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.control-lock-button {
+  padding: 0.55rem 0.8rem;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .remote-control-group {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -756,11 +851,21 @@ body.system-offline .remote-control-panel {opacity:1!important;filter:none!impor
 }
 
 @media (max-width: 680px) {
+  .control-access-gate {
+    grid-template-columns: 1fr;
+  }
+  .control-gate-mark {
+    width: 58px;
+  }
+  .control-unlock-row {
+    grid-template-columns: 1fr;
+  }
   .remote-control-group {
     grid-template-columns: repeat(2, 1fr);
   }
   .control-btn-emergency {grid-column:1/-1}
   .control-panel-heading {display:block}
+  .control-heading-actions {align-items:flex-start;flex-direction:column;margin-top:.75rem}
   .control-safety-chip {display:inline-block;margin-top:.75rem}
 }
 

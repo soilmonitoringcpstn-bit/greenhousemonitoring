@@ -153,26 +153,48 @@
         </article>
       </section>
 
-      <section class="panel remote-control-panel" aria-labelledby="remoteControlTitle">
-        <div class="control-panel-heading">
+      <section class="panel remote-control-panel" aria-label="Remote pump control">
+        <div id="controlAccessGate" class="control-access-gate">
+          <div class="control-gate-mark" aria-hidden="true">CTRL</div>
           <div>
-            <p class="eyebrow">Acknowledged commands</p>
-            <h2 id="remoteControlTitle">Remote pump control</h2>
+            <p class="eyebrow">Restricted operation</p>
+            <h2>Remote controls are hidden</h2>
+            <p class="control-copy">Enter the separate control password to reveal pump commands.</p>
           </div>
-          <span id="remoteSafetyState" class="control-safety-chip">Checking device</span>
+          <form id="controlUnlockForm" class="control-unlock-form">
+            <label for="controlPasswordInput">Control password</label>
+            <div class="control-unlock-row">
+              <input id="controlPasswordInput" type="password" autocomplete="current-password" required />
+              <button type="submit">Unlock controls</button>
+            </div>
+            <p id="controlUnlockError" class="control-unlock-error" role="alert"></p>
+          </form>
         </div>
-        <p class="control-copy">Commands expire after 45 seconds and are complete only after the ESP32 acknowledges them.</p>
-        <div class="remote-control-group" aria-describedby="remoteControlStatus">
-          <button class="control-btn control-btn-auto" type="button" data-remote-action="auto"><span class="btn-label">Auto / Resume</span><small>Clear emergency mode</small></button>
-          <button class="control-btn control-btn-on" type="button" data-remote-action="pump_on"><span class="btn-label">Pump ON</span><small>Safety checks apply</small></button>
-          <button class="control-btn control-btn-off" type="button" data-remote-action="pump_off"><span class="btn-label">Pump OFF</span><small>Stop current run</small></button>
-          <button class="control-btn control-btn-reset" type="button" data-remote-action="reset_cooldown"><span class="btn-label">Reset cooldown</span><small>Confirmation required</small></button>
-          <button class="control-btn control-btn-emergency" type="button" data-remote-action="emergency_off"><span class="btn-label">Emergency OFF</span><small>Latch pump off</small></button>
+
+        <div id="remoteControlContent" hidden>
+          <div class="control-panel-heading">
+            <div>
+              <p class="eyebrow">Acknowledged commands</p>
+              <h2 id="remoteControlTitle">Remote pump control</h2>
+            </div>
+            <div class="control-heading-actions">
+              <span id="remoteSafetyState" class="control-safety-chip">Checking device</span>
+              <button id="lockRemoteControls" class="control-lock-button" type="button">Lock controls</button>
+            </div>
+          </div>
+          <p class="control-copy">Commands expire after 45 seconds and are complete only after the ESP32 acknowledges them.</p>
+          <div class="remote-control-group" aria-describedby="remoteControlStatus">
+            <button class="control-btn control-btn-auto" type="button" data-remote-action="auto"><span class="btn-label">Auto / Resume</span><small>Clear emergency mode</small></button>
+            <button class="control-btn control-btn-on" type="button" data-remote-action="pump_on"><span class="btn-label">Pump ON</span><small>Safety checks apply</small></button>
+            <button class="control-btn control-btn-off" type="button" data-remote-action="pump_off"><span class="btn-label">Pump OFF</span><small>Stop current run</small></button>
+            <button class="control-btn control-btn-reset" type="button" data-remote-action="reset_cooldown"><span class="btn-label">Reset cooldown</span><small>Confirmation required</small></button>
+            <button class="control-btn control-btn-emergency" type="button" data-remote-action="emergency_off"><span class="btn-label">Emergency OFF</span><small>Latch pump off</small></button>
+          </div>
+          <div id="remoteControlStatus" class="acknowledgement-rail neutral" role="status" aria-live="polite">
+            <span class="ack-dot"></span><span>Ready to send a command</span>
+          </div>
+          <p class="control-warning">This password gate hides controls in the project dashboard. Firebase rules should still be secured before public deployment.</p>
         </div>
-        <div id="remoteControlStatus" class="acknowledgement-rail neutral" role="status" aria-live="polite">
-          <span class="ack-dot"></span><span>Ready to send a command</span>
-        </div>
-        <p class="control-warning">Remote access requires protected Firebase Authentication and database rules before public deployment.</p>
       </section>
 
       <section id="errorPanel" class="panel error-panel" hidden>
