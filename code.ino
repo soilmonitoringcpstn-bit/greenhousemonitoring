@@ -1301,7 +1301,22 @@ void syncCellularTime() {
   lastCellularTimeAttempt = millis();
   int year3=0, month3=0, day3=0, hour3=0, min3=0, sec3=0;
   float timezone=0;
-  Serial.println("Requesting time from Cellular Network...");
+  Serial.println("Requesting UTC time through TNT cellular NTP...");
+
+  // TNT does not always broadcast network time to the modem. Ask an Internet
+  // NTP server through the already-connected cellular data session first, then
+  // read the A7670E clock. This does not require Wi-Fi.
+  byte ntpResult = modem.NTPServerSync("pool.ntp.org", 0);
+  if (ntpResult == 1) {
+    Serial.println("A7670E cellular NTP synchronization successful.");
+  } else {
+    Serial.print("A7670E cellular NTP result: ");
+    Serial.print(ntpResult);
+    Serial.print(" - ");
+    Serial.println(modem.ShowNTPError(ntpResult));
+    Serial.println("Trying the modem/network clock as a fallback...");
+  }
+
   if (modem.getNetworkTime(&year3, &month3, &day3, &hour3, &min3, &sec3, &timezone)) {
     // Some modem firmware returns a two-digit year while other versions return
     // the complete year. Normalize it before constructing struct tm.
@@ -1316,7 +1331,7 @@ void syncCellularTime() {
       Serial.print(month3);
       Serial.print("-");
       Serial.println(day3);
-      clockSyncState = "Cellular clock invalid; Firebase fallback pending";
+      clockSyncState = "Cellular clock invalid; retry pending";
       return;
     }
 
@@ -1335,7 +1350,7 @@ void syncCellularTime() {
     }
     if (timeSinceEpoch < 1704067200 || timeSinceEpoch > 2082758400) {
       Serial.println("Rejected out-of-range cellular Unix timestamp.");
-      clockSyncState = "Cellular clock invalid; Firebase fallback pending";
+      clockSyncState = "Cellular clock invalid; retry pending";
       return;
     }
     struct timeval tv;
@@ -1343,11 +1358,13 @@ void syncCellularTime() {
     tv.tv_usec = 0;
     settimeofday(&tv, NULL);
     ntpSyncRequested = false;
-    clockSyncState = "Cellular network time synchronized";
-    Serial.println("Time synced via Cellular Network.");
+    clockSyncState = ntpResult == 1 ?
+      "TNT cellular Internet time synchronized" :
+      "Cellular network time synchronized";
+    Serial.println("ESP32 clock synchronized without Wi-Fi.");
   } else {
-    clockSyncState = "Cellular time unavailable; Firebase fallback pending";
-    Serial.println("Failed to get Cellular Time.");
+    clockSyncState = "Cellular Internet time unavailable; retry pending";
+    Serial.println("Failed to read time from the A7670E clock.");
   }
 }
 
@@ -1609,6 +1626,15 @@ bool responseContainsHttpSuccess(const String &response, int expectedMethod) {
          methodCode == expectedMethod && statusCode >= 200 && statusCode < 300;
 }
 
+bool responseIsA7670PostTransfer706(const String &response, int expectedMethod) {
+  int methodCode = -1;
+  int statusCode = -1;
+  int responseLength = -1;
+  return parseHttpAction(response, methodCode, statusCode, responseLength) &&
+         methodCode == expectedMethod && statusCode == 706 &&
+         responseLength == 0;
+}
+
 int httpActionResponseLength(const String &response, int expectedMethod) {
   int methodCode = -1;
   int statusCode = -1;
@@ -1747,6 +1773,18 @@ bool nativeFirebasePatch(const String &url,
   // HTTPACTION=1 is POST; Firebase changes it to PATCH from the override header.
   response = sendA7670AT("AT+HTTPACTION=1", 60000UL, "+HTTPACTION:");
   bool success = responseContainsHttpSuccess(response, 1);
+
+  // This A7670E firmware sometimes reports modem result 706 after Firebase has
+  // already applied the PATCH (the live dashboard confirms the new values).
+  // Normally Firebase now returns a body, avoiding that firmware edge case. If
+  // it still happens with an empty modem response, accept this idempotent PATCH
+  // so the queue and portal do not incorrectly remain in a failed state.
+  if (!success && responseIsA7670PostTransfer706(response, 1)) {
+    success = true;
+    Serial.println(
+      "A7670E reported 706 after transfer; accepting the delivered Firebase PATCH."
+    );
+  }
 
   int responseLength = httpActionResponseLength(response, 1);
   String readResponse = readNativeHttpResponse(responseLength);
@@ -2029,9 +2067,10 @@ bool sendToFirebase(float temperature, float humidity, bool dhtError,
   jsonData += "}";
   jsonData += "}";
 
-  // Firebase does not need to echo the complete telemetry JSON back to the
-  // modem. A silent PATCH saves cellular data and avoids an unnecessary read.
-  const String patchUrl = String(FIREBASE_TELEMETRY_URL) + "?print=silent";
+  // Ask Firebase for its normal PATCH response. Some A7670E firmware revisions
+  // mishandle Firebase's 204 No Content reply produced by ?print=silent and
+  // report modem result 706 even though Firebase applied the data.
+  const String patchUrl = String(FIREBASE_TELEMETRY_URL);
 
   lastUploadAttemptMs = millis();
   uploadState = usingWifi ? "Uploading through Wi-Fi" : "Uploading through cellular";
