@@ -153,6 +153,93 @@
         </article>
       </section>
 
+      <section class="panel history-panel" aria-labelledby="historyTitle">
+        <div class="history-heading">
+          <div>
+            <p class="eyebrow">Browser archive</p>
+            <h2 id="historyTitle">Greenhouse history</h2>
+            <p class="history-copy">A reading is saved every 15 minutes while this dashboard is open. History stays on this browser and never changes the ESP32.</p>
+          </div>
+          <div class="history-archive-state">
+            <span class="history-live-dot" aria-hidden="true"></span>
+            <span id="historyArchiveStatus">Waiting for first reading</span>
+          </div>
+        </div>
+
+        <div class="history-toolbar" aria-label="History controls">
+          <div class="history-range-group" role="group" aria-label="History time range">
+            <button type="button" class="history-range active" data-history-range="24h">24 hours</button>
+            <button type="button" class="history-range" data-history-range="7d">7 days</button>
+            <button type="button" class="history-range" data-history-range="30d">30 days</button>
+            <button type="button" class="history-range" data-history-range="all">All</button>
+          </div>
+          <div class="history-actions">
+            <button id="exportHistory" class="history-action primary" type="button">Export CSV</button>
+            <button id="clearHistory" class="history-action danger" type="button">Clear history</button>
+          </div>
+        </div>
+
+        <div class="history-summary" aria-label="History summary">
+          <article>
+            <span>Samples</span>
+            <strong id="historySampleCount">0</strong>
+            <small id="historyTimeSpan">No saved range</small>
+          </article>
+          <article>
+            <span>Average soil</span>
+            <strong id="historyAverageSoil">--</strong>
+            <small>Moisture percentage</small>
+          </article>
+          <article>
+            <span>Average temperature</span>
+            <strong id="historyAverageTemp">--</strong>
+            <small>DHT22 in Celsius</small>
+          </article>
+          <article>
+            <span>Average humidity</span>
+            <strong id="historyAverageHumidity">--</strong>
+            <small>Relative humidity</small>
+          </article>
+        </div>
+
+        <div class="history-chart-card">
+          <div class="history-chart-meta">
+            <div class="history-legend" aria-label="Chart legend">
+              <span><i class="legend-soil"></i>Soil %</span>
+              <span><i class="legend-temp"></i>Temperature °C</span>
+              <span><i class="legend-humidity"></i>Humidity %</span>
+              <span><i class="legend-event"></i>Pump / rain event</span>
+            </div>
+            <span id="historyRangeLabel">Last 24 hours</span>
+          </div>
+          <div class="history-chart-wrap">
+            <svg id="historyChart" class="history-chart" viewBox="0 0 1000 300" preserveAspectRatio="none" role="img" aria-label="Greenhouse sensor history chart"></svg>
+            <div id="historyEmpty" class="history-empty">
+              <strong>History starts here</strong>
+              <span>Keep this dashboard open to collect a reading every 15 minutes.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="history-table-wrap">
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th scope="col">Philippine time</th>
+                <th scope="col">Soil</th>
+                <th scope="col">Temperature</th>
+                <th scope="col">Humidity</th>
+                <th scope="col">Pump</th>
+                <th scope="col">Rain</th>
+              </tr>
+            </thead>
+            <tbody id="historyTableBody">
+              <tr><td colspan="6" class="history-table-empty">No history saved yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <section class="panel remote-control-panel" aria-label="Remote pump control">
         <div id="controlAccessGate" class="control-access-gate">
           <div class="control-gate-mark" aria-hidden="true">CTRL</div>

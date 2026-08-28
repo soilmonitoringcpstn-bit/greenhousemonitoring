@@ -12,6 +12,10 @@ const MARK_READINGS_STALE_AFTER_MS = 15 * 60 * 1000;
 const SIGNATURE_STORAGE_KEY = "greenhouseLatestSignature";
 const CHANGED_AT_STORAGE_KEY = "greenhouseLastDataChangedAt";
 const AUTH_STORAGE_KEY = "greenhouseDashboardLoggedIn";
+const HISTORY_STORAGE_KEY = "greenhouseReadingHistoryV1";
+const HISTORY_SAMPLE_INTERVAL_MS = 15 * 60 * 1000;
+const HISTORY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const HISTORY_MAX_RECORDS = 3000;
 
 let latestData = null;
 let latestSignature = localStorage.getItem(SIGNATURE_STORAGE_KEY) || "";
@@ -19,6 +23,9 @@ let lastDataChangedAt = Number(localStorage.getItem(CHANGED_AT_STORAGE_KEY)) || 
 let realtimeStarted = false;
 let remoteCommandPending = false;
 let controlsUnlocked = false;
+let historyRecords = loadHistoryRecords();
+let selectedHistoryRange = "24h";
+let suppressedHistoryBucket = null;
 
 const elements = {
   loginScreen: document.querySelector("#loginScreen"),
@@ -57,6 +64,19 @@ const elements = {
   remoteControlStatus: document.querySelector("#remoteControlStatus"),
   remoteSafetyState: document.querySelector("#remoteSafetyState"),
   remoteButtons: [...document.querySelectorAll("[data-remote-action]")],
+  historyArchiveStatus: document.querySelector("#historyArchiveStatus"),
+  historySampleCount: document.querySelector("#historySampleCount"),
+  historyTimeSpan: document.querySelector("#historyTimeSpan"),
+  historyAverageSoil: document.querySelector("#historyAverageSoil"),
+  historyAverageTemp: document.querySelector("#historyAverageTemp"),
+  historyAverageHumidity: document.querySelector("#historyAverageHumidity"),
+  historyRangeLabel: document.querySelector("#historyRangeLabel"),
+  historyChart: document.querySelector("#historyChart"),
+  historyEmpty: document.querySelector("#historyEmpty"),
+  historyTableBody: document.querySelector("#historyTableBody"),
+  historyRangeButtons: [...document.querySelectorAll("[data-history-range]")],
+  exportHistory: document.querySelector("#exportHistory"),
+  clearHistory: document.querySelector("#clearHistory"),
 };
 
 function getByPath(source, path) {
@@ -181,6 +201,246 @@ function getDeviceLastUpdateMs(data) {
   return Number.isFinite(deviceTimestamp) && deviceTimestamp > 0
     ? deviceTimestamp * 1000
     : NaN;
+}
+
+function loadHistoryRecords() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(HISTORY_STORAGE_KEY) || "[]");
+    if (!Array.isArray(stored)) return [];
+    return stored
+      .filter((record) => Number.isFinite(Number(record?.timestamp)))
+      .sort((a, b) => Number(a.timestamp) - Number(b.timestamp))
+      .slice(-HISTORY_MAX_RECORDS);
+  } catch (error) {
+    console.warn("Unable to read greenhouse browser history:", error);
+    return [];
+  }
+}
+
+function numericOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function readingIsTrue(value, positiveText) {
+  if (value === true) return true;
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "true" || normalized === "on" || normalized === positiveText;
+}
+
+function saveHistoryRecords() {
+  try {
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(historyRecords));
+    return true;
+  } catch (error) {
+    console.warn("Unable to save greenhouse browser history:", error);
+    if (elements.historyArchiveStatus) {
+      elements.historyArchiveStatus.textContent = "Browser storage is unavailable";
+    }
+    return false;
+  }
+}
+
+function archiveReading(readings, timestamp) {
+  if (!Number.isFinite(timestamp)) return;
+  const bucket = Math.floor(timestamp / HISTORY_SAMPLE_INTERVAL_MS);
+  if (bucket === suppressedHistoryBucket) return;
+
+  const lastRecord = historyRecords.at(-1);
+  if (lastRecord && Math.floor(lastRecord.timestamp / HISTORY_SAMPLE_INTERVAL_MS) === bucket) {
+    return;
+  }
+
+  const dhtHasError = booleanValue(readings.dhtError);
+  historyRecords.push({
+    timestamp: Math.round(timestamp),
+    soilPercent: numericOrNull(readings.soilPercent),
+    soilRaw: numericOrNull(readings.soilRaw),
+    temperature: dhtHasError ? null : numericOrNull(readings.temperature),
+    humidity: dhtHasError ? null : numericOrNull(readings.humidity),
+    pumpOn: readingIsTrue(readings.pumpStatus, "on"),
+    rain: readingIsTrue(readings.rainStatus, "rain detected") ||
+      String(readings.rainStatus ?? "").toLowerCase() === "raining",
+    soilStatus: String(readings.soilStatus ?? ""),
+  });
+
+  const oldestAllowed = Date.now() - HISTORY_RETENTION_MS;
+  historyRecords = historyRecords
+    .filter((record) => record.timestamp >= oldestAllowed)
+    .slice(-HISTORY_MAX_RECORDS);
+
+  if (saveHistoryRecords()) renderHistory();
+}
+
+function historyRangeMilliseconds(range) {
+  return {
+    "24h": 24 * 60 * 60 * 1000,
+    "7d": 7 * 24 * 60 * 60 * 1000,
+    "30d": 30 * 24 * 60 * 60 * 1000,
+  }[range] || Infinity;
+}
+
+function historyRangeName(range) {
+  return { "24h": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", all: "All saved history" }[range];
+}
+
+function getVisibleHistory() {
+  const duration = historyRangeMilliseconds(selectedHistoryRange);
+  if (!Number.isFinite(duration)) return [...historyRecords];
+  const cutoff = Date.now() - duration;
+  return historyRecords.filter((record) => record.timestamp >= cutoff);
+}
+
+function averageHistoryValue(records, key) {
+  const values = records
+    .map((record) => record[key])
+    .filter((value) => value !== null && value !== undefined && value !== "")
+    .map(Number)
+    .filter(Number.isFinite);
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function formatHistoryTimestamp(timestamp, includeDate = true) {
+  const options = includeDate
+    ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
+    : { hour: "numeric", minute: "2-digit" };
+  return new Intl.DateTimeFormat("en-PH", { ...options, timeZone: "Asia/Manila" }).format(timestamp);
+}
+
+function historyPath(records, key, xFor, yFor) {
+  let path = "";
+  let drawing = false;
+  records.forEach((record) => {
+    const rawValue = record[key];
+    const value = Number(rawValue);
+    if (rawValue === null || rawValue === undefined || rawValue === "" || !Number.isFinite(value)) {
+      drawing = false;
+      return;
+    }
+    path += `${drawing ? " L" : "M"} ${xFor(record.timestamp).toFixed(1)} ${yFor(value).toFixed(1)}`;
+    drawing = true;
+  });
+  return path;
+}
+
+function renderHistoryChart(records) {
+  if (!elements.historyChart) return;
+  const left = 48;
+  const right = 982;
+  const top = 22;
+  const bottom = 258;
+  const now = Date.now();
+  const duration = historyRangeMilliseconds(selectedHistoryRange);
+  const minimumTime = records[0]?.timestamp || now;
+  const maximumTime = records.at(-1)?.timestamp || now;
+  const start = Number.isFinite(duration) ? now - duration : minimumTime;
+  const end = Number.isFinite(duration) ? now : Math.max(maximumTime, minimumTime + 1);
+  const xFor = (timestamp) => left + ((timestamp - start) / Math.max(1, end - start)) * (right - left);
+  const percentY = (value) => bottom - (Math.max(0, Math.min(100, value)) / 100) * (bottom - top);
+  const temperatureY = (value) => bottom - (Math.max(0, Math.min(50, value)) / 50) * (bottom - top);
+
+  const grid = [0, 25, 50, 75, 100].map((value) => {
+    const y = percentY(value);
+    const tempValue = Math.round(value / 2);
+    return `<line class="chart-grid-line" x1="${left}" y1="${y}" x2="${right}" y2="${y}"></line>
+      <text class="chart-axis-label" x="4" y="${y + 4}">${value}% / ${tempValue}°</text>`;
+  }).join("");
+
+  const events = records.map((record) => {
+    const x = xFor(record.timestamp).toFixed(1);
+    return `${record.pumpOn ? `<circle class="chart-pump-event" cx="${x}" cy="${top + 8}" r="5"></circle>` : ""}
+      ${record.rain ? `<circle class="chart-rain-event" cx="${x}" cy="${top + 23}" r="5"></circle>` : ""}`;
+  }).join("");
+
+  elements.historyChart.innerHTML = `${grid}
+    <path class="chart-series soil" d="${historyPath(records, "soilPercent", xFor, percentY)}"></path>
+    <path class="chart-series temperature" d="${historyPath(records, "temperature", xFor, temperatureY)}"></path>
+    <path class="chart-series humidity" d="${historyPath(records, "humidity", xFor, percentY)}"></path>
+    ${events}
+    <text class="chart-time-label" x="${left}" y="288">${escapeHtml(formatHistoryTimestamp(start))}</text>
+    <text class="chart-time-label end" x="${right}" y="288">${escapeHtml(formatHistoryTimestamp(end))}</text>`;
+}
+
+function renderHistoryTable(records) {
+  if (!elements.historyTableBody) return;
+  const rows = [...records].reverse().slice(0, 50);
+  elements.historyTableBody.innerHTML = rows.length ? rows.map((record) => `
+    <tr>
+      <td><time datetime="${new Date(record.timestamp).toISOString()}">${escapeHtml(formatHistoryTimestamp(record.timestamp))}</time></td>
+      <td><strong>${record.soilPercent == null ? "--" : `${formatNumber(record.soilPercent, 0)}%`}</strong><small>${escapeHtml(record.soilStatus || `Raw ${record.soilRaw ?? "--"}`)}</small></td>
+      <td>${record.temperature == null ? "--" : `${formatNumber(record.temperature)}°C`}</td>
+      <td>${record.humidity == null ? "--" : `${formatNumber(record.humidity)}%`}</td>
+      <td><span class="history-state ${record.pumpOn ? "active" : ""}">${record.pumpOn ? "ON" : "OFF"}</span></td>
+      <td><span class="history-state ${record.rain ? "rain" : ""}">${record.rain ? "Rain" : "Clear"}</span></td>
+    </tr>`).join("") : `<tr><td colspan="6" class="history-table-empty">No readings in this time range.</td></tr>`;
+}
+
+function renderHistory() {
+  const records = getVisibleHistory();
+  const averageSoil = averageHistoryValue(records, "soilPercent");
+  const averageTemperature = averageHistoryValue(records, "temperature");
+  const averageHumidity = averageHistoryValue(records, "humidity");
+  const oldest = historyRecords[0]?.timestamp;
+  const newest = historyRecords.at(-1)?.timestamp;
+
+  if (elements.historySampleCount) elements.historySampleCount.textContent = String(records.length);
+  if (elements.historyTimeSpan) {
+    elements.historyTimeSpan.textContent = records.length > 1
+      ? `${formatHistoryTimestamp(records[0].timestamp)} – ${formatHistoryTimestamp(records.at(-1).timestamp)}`
+      : records.length === 1 ? formatHistoryTimestamp(records[0].timestamp) : "No saved range";
+  }
+  if (elements.historyAverageSoil) elements.historyAverageSoil.textContent = averageSoil === null ? "--" : `${formatNumber(averageSoil)}%`;
+  if (elements.historyAverageTemp) elements.historyAverageTemp.textContent = averageTemperature === null ? "--" : `${formatNumber(averageTemperature)}°C`;
+  if (elements.historyAverageHumidity) elements.historyAverageHumidity.textContent = averageHumidity === null ? "--" : `${formatNumber(averageHumidity)}%`;
+  if (elements.historyRangeLabel) elements.historyRangeLabel.textContent = historyRangeName(selectedHistoryRange);
+  if (elements.historyEmpty) elements.historyEmpty.hidden = records.length > 0;
+  if (elements.exportHistory) elements.exportHistory.disabled = historyRecords.length === 0;
+  if (elements.clearHistory) elements.clearHistory.disabled = historyRecords.length === 0;
+  if (elements.historyArchiveStatus) {
+    elements.historyArchiveStatus.textContent = newest
+      ? `${historyRecords.length} saved · newest ${formatHistoryTimestamp(newest)}`
+      : "Waiting for first reading";
+    elements.historyArchiveStatus.title = oldest
+      ? `Stored locally from ${formatHistoryTimestamp(oldest)} to ${formatHistoryTimestamp(newest)}`
+      : "History will begin when a fresh device reading arrives.";
+  }
+
+  elements.historyRangeButtons.forEach((button) => {
+    const active = button.dataset.historyRange === selectedHistoryRange;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  renderHistoryChart(records);
+  renderHistoryTable(records);
+}
+
+function exportHistoryCsv() {
+  if (!historyRecords.length) return;
+  const rows = [
+    ["philippine_time", "timestamp_ms", "soil_percent", "soil_raw", "soil_status", "temperature_c", "humidity_percent", "pump", "rain"],
+    ...historyRecords.map((record) => [
+      formatHistoryTimestamp(record.timestamp), record.timestamp, record.soilPercent ?? "", record.soilRaw ?? "",
+      record.soilStatus, record.temperature ?? "", record.humidity ?? "", record.pumpOn ? "ON" : "OFF", record.rain ? "RAIN" : "CLEAR",
+    ]),
+  ];
+  const csv = rows.map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `greenhouse-history-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function clearHistoryRecords() {
+  if (!historyRecords.length || !window.confirm("Clear all greenhouse history saved in this browser? This cannot be undone.")) return;
+  suppressedHistoryBucket = Math.floor(Date.now() / HISTORY_SAMPLE_INTERVAL_MS);
+  historyRecords = [];
+  localStorage.removeItem(HISTORY_STORAGE_KEY);
+  renderHistory();
 }
 
 function isRemoteTelemetryFresh() {
@@ -428,6 +688,12 @@ function renderDashboard(data) {
     : "Invalid device clock";
   elements.lastSync.textContent = new Date().toLocaleString();
 
+  // Web-only archive: save only fresh, valid device readings. The ESP32 and
+  // Firebase structure remain unchanged.
+  if (deviceTimeIsValid && Date.now() - deviceTimeMs <= MARK_READINGS_STALE_AFTER_MS) {
+    archiveReading(readings, deviceTimeMs);
+  }
+
   elements.errorPanel.hidden = true;
   setConnectionStatus(getFreshnessType() === "error" ? "Offline" : "Connected", getFreshnessType());
 
@@ -557,6 +823,7 @@ function showDashboard() {
   elements.loginScreen.hidden = true;
   elements.appShell.hidden = false;
   lockRemoteControlPanel();
+  renderHistory();
   loadData();
   startRealtimeUpdates();
 }
@@ -596,6 +863,15 @@ elements.lockRemoteControls.addEventListener("click", lockRemoteControlPanel);
 elements.remoteButtons.forEach((button) => {
   button.addEventListener("click", () => sendRemoteCommand(button.dataset.remoteAction));
 });
+
+elements.historyRangeButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    selectedHistoryRange = button.dataset.historyRange;
+    renderHistory();
+  });
+});
+elements.exportHistory?.addEventListener("click", exportHistoryCsv);
+elements.clearHistory?.addEventListener("click", clearHistoryRecords);
 
 if (sessionStorage.getItem(AUTH_STORAGE_KEY) === "true") {
   showDashboard();
