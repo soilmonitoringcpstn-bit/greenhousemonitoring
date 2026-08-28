@@ -2,6 +2,7 @@ const FIREBASE_URL = window.GREENHOUSE_CONFIG?.firebaseUrl;
 const CONTROL_COMMAND_URL = window.GREENHOUSE_CONFIG?.controlCommandUrl;
 const CONTROL_ACK_URL = window.GREENHOUSE_CONFIG?.controlAckUrl;
 const CONTROL_PASSWORD_HASH = window.GREENHOUSE_CONFIG?.controlPasswordHash;
+const HISTORY_URL = window.GREENHOUSE_CONFIG?.historyUrl;
 
 if (!FIREBASE_URL) {
   throw new Error("Missing GREENHOUSE_CONFIG.firebaseUrl in app-config.js");
@@ -26,6 +27,10 @@ let controlsUnlocked = false;
 let historyRecords = loadHistoryRecords();
 let selectedHistoryRange = "24h";
 let suppressedHistoryBucket = null;
+let historyCloudReady = false;
+let historyStreamStarted = false;
+const historyCloudKeys = new Set();
+const historyUploadsPending = new Set();
 
 const elements = {
   loginScreen: document.querySelector("#loginScreen"),
@@ -207,10 +212,7 @@ function loadHistoryRecords() {
   try {
     const stored = JSON.parse(localStorage.getItem(HISTORY_STORAGE_KEY) || "[]");
     if (!Array.isArray(stored)) return [];
-    return stored
-      .filter((record) => Number.isFinite(Number(record?.timestamp)))
-      .sort((a, b) => Number(a.timestamp) - Number(b.timestamp))
-      .slice(-HISTORY_MAX_RECORDS);
+    return trimAndSortHistory(stored);
   } catch (error) {
     console.warn("Unable to read greenhouse browser history:", error);
     return [];
@@ -218,6 +220,7 @@ function loadHistoryRecords() {
 }
 
 function numericOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
@@ -235,24 +238,57 @@ function saveHistoryRecords() {
   } catch (error) {
     console.warn("Unable to save greenhouse browser history:", error);
     if (elements.historyArchiveStatus) {
-      elements.historyArchiveStatus.textContent = "Browser storage is unavailable";
+      elements.historyArchiveStatus.textContent = "Offline history cache is unavailable";
     }
     return false;
   }
 }
 
-function archiveReading(readings, timestamp) {
-  if (!Number.isFinite(timestamp)) return;
-  const bucket = Math.floor(timestamp / HISTORY_SAMPLE_INTERVAL_MS);
-  if (bucket === suppressedHistoryBucket) return;
+function historyBucket(timestamp) {
+  return Math.floor(Number(timestamp) / HISTORY_SAMPLE_INTERVAL_MS);
+}
 
-  const lastRecord = historyRecords.at(-1);
-  if (lastRecord && Math.floor(lastRecord.timestamp / HISTORY_SAMPLE_INTERVAL_MS) === bucket) {
-    return;
-  }
+function historyKey(timestamp) {
+  return `s${String(historyBucket(timestamp)).padStart(10, "0")}`;
+}
 
+function normalizeHistoryRecord(record) {
+  if (!record || !Number.isFinite(Number(record.timestamp))) return null;
+  return {
+    timestamp: Math.round(Number(record.timestamp)),
+    soilPercent: numericOrNull(record.soilPercent),
+    soilRaw: numericOrNull(record.soilRaw),
+    temperature: numericOrNull(record.temperature),
+    humidity: numericOrNull(record.humidity),
+    pumpOn: booleanValue(record.pumpOn),
+    rain: booleanValue(record.rain),
+    soilStatus: String(record.soilStatus ?? ""),
+  };
+}
+
+function trimAndSortHistory(records) {
+  const oldestAllowed = Date.now() - HISTORY_RETENTION_MS;
+  return records
+    .map(normalizeHistoryRecord)
+    .filter((record) => record && record.timestamp >= oldestAllowed)
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .slice(-HISTORY_MAX_RECORDS);
+}
+
+function mergeHistoryRecords(records) {
+  const byBucket = new Map();
+  [...historyRecords, ...records].forEach((record) => {
+    const normalized = normalizeHistoryRecord(record);
+    if (normalized) byBucket.set(historyBucket(normalized.timestamp), normalized);
+  });
+  historyRecords = trimAndSortHistory([...byBucket.values()]);
+  saveHistoryRecords();
+  renderHistory();
+}
+
+function makeHistoryRecord(readings, timestamp) {
   const dhtHasError = booleanValue(readings.dhtError);
-  historyRecords.push({
+  return {
     timestamp: Math.round(timestamp),
     soilPercent: numericOrNull(readings.soilPercent),
     soilRaw: numericOrNull(readings.soilRaw),
@@ -262,14 +298,184 @@ function archiveReading(readings, timestamp) {
     rain: readingIsTrue(readings.rainStatus, "rain detected") ||
       String(readings.rainStatus ?? "").toLowerCase() === "raining",
     soilStatus: String(readings.soilStatus ?? ""),
+  };
+}
+
+function historyQueryUrl() {
+  return `${HISTORY_URL}?orderBy=%22%24key%22&limitToLast=${HISTORY_MAX_RECORDS}`;
+}
+
+async function uploadHistoryRecord(record) {
+  if (!HISTORY_URL) return;
+  const key = historyKey(record.timestamp);
+  if (historyCloudKeys.has(key) || historyUploadsPending.has(key)) return;
+
+  historyUploadsPending.add(key);
+  if (elements.historyArchiveStatus) {
+    elements.historyArchiveStatus.textContent = "Saving snapshot to Firebase…";
+  }
+
+  // Save this bucket and delete the bucket that just became older than 30 days
+  // in one atomic PATCH. This keeps the online archive near 2,880 samples.
+  const expiredKey = historyKey(record.timestamp - HISTORY_RETENTION_MS);
+  const update = { [key]: record, [expiredKey]: null };
+
+  try {
+    const response = await fetch(HISTORY_URL, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(update),
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`Firebase history write returned ${response.status}`);
+    historyCloudKeys.add(key);
+    historyCloudKeys.delete(expiredKey);
+    historyCloudReady = true;
+    renderHistory();
+  } catch (error) {
+    console.warn("Unable to save Firebase history:", error);
+    if (elements.historyArchiveStatus) {
+      elements.historyArchiveStatus.textContent = "Cloud save failed · will retry";
+    }
+  } finally {
+    historyUploadsPending.delete(key);
+  }
+}
+
+function archiveReading(readings, timestamp) {
+  if (!Number.isFinite(timestamp)) return;
+  const bucket = historyBucket(timestamp);
+  if (bucket === suppressedHistoryBucket) return;
+
+  let record = historyRecords.find((item) => historyBucket(item.timestamp) === bucket);
+  if (!record) {
+    record = makeHistoryRecord(readings, timestamp);
+    historyRecords = trimAndSortHistory([...historyRecords, record]);
+    saveHistoryRecords();
+    renderHistory();
+  }
+
+  // A failed cloud write is retried on the next live ESP32 update.
+  if (!historyCloudKeys.has(historyKey(record.timestamp))) {
+    uploadHistoryRecord(record);
+  }
+}
+
+async function migrateLocalHistoryToCloud(localRecords) {
+  if (!HISTORY_URL) return;
+  const update = {};
+  localRecords.forEach((record) => {
+    const normalized = normalizeHistoryRecord(record);
+    if (!normalized) return;
+    const key = historyKey(normalized.timestamp);
+    if (!historyCloudKeys.has(key)) update[key] = normalized;
   });
 
-  const oldestAllowed = Date.now() - HISTORY_RETENTION_MS;
-  historyRecords = historyRecords
-    .filter((record) => record.timestamp >= oldestAllowed)
-    .slice(-HISTORY_MAX_RECORDS);
+  const keys = Object.keys(update);
+  if (!keys.length) return;
+  const response = await fetch(HISTORY_URL, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(update),
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`Firebase history migration returned ${response.status}`);
+  keys.forEach((key) => historyCloudKeys.add(key));
+}
 
-  if (saveHistoryRecords()) renderHistory();
+function recordsFromCloudObject(data) {
+  if (!data || typeof data !== "object") return [];
+  return Object.entries(data).flatMap(([key, value]) => {
+    const record = normalizeHistoryRecord(value);
+    if (!record) return [];
+    historyCloudKeys.add(key);
+    return [record];
+  });
+}
+
+async function loadCloudHistory() {
+  if (!HISTORY_URL) {
+    if (elements.historyArchiveStatus) elements.historyArchiveStatus.textContent = "Cloud history URL is not configured";
+    return;
+  }
+
+  const localBeforeMerge = [...historyRecords];
+  try {
+    const response = await fetch(historyQueryUrl(), { cache: "no-store" });
+    if (!response.ok) throw new Error(`Firebase history read returned ${response.status}`);
+    const cloudRecords = recordsFromCloudObject(await response.json());
+    mergeHistoryRecords(cloudRecords);
+    await migrateLocalHistoryToCloud(localBeforeMerge);
+    historyCloudReady = true;
+    renderHistory();
+  } catch (error) {
+    console.warn("Unable to load Firebase history:", error);
+    if (elements.historyArchiveStatus) {
+      elements.historyArchiveStatus.textContent = "Cloud history unavailable · showing offline cache";
+    }
+  }
+}
+
+function handleHistoryStreamMessage(event) {
+  try {
+    const message = JSON.parse(event.data);
+    if (message.path === "/") {
+      historyCloudKeys.clear();
+      if (message.data === null) {
+        suppressedHistoryBucket = historyBucket(Date.now());
+        historyRecords = [];
+        saveHistoryRecords();
+        historyCloudReady = true;
+        renderHistory();
+        return;
+      }
+      mergeHistoryRecords(recordsFromCloudObject(message.data));
+      historyCloudReady = true;
+      return;
+    }
+
+    const parts = message.path.split("/").filter(Boolean);
+    if (parts.length !== 1) {
+      loadCloudHistory();
+      return;
+    }
+
+    const key = parts[0];
+    if (message.data === null) {
+      historyCloudKeys.delete(key);
+      historyRecords = historyRecords.filter((record) => historyKey(record.timestamp) !== key);
+      saveHistoryRecords();
+      renderHistory();
+      return;
+    }
+
+    historyCloudKeys.add(key);
+    mergeHistoryRecords([message.data]);
+    historyCloudReady = true;
+  } catch (error) {
+    console.warn("Invalid Firebase history stream event:", error);
+  }
+}
+
+function startCloudHistoryStream() {
+  if (historyStreamStarted || !HISTORY_URL || !window.EventSource) return;
+  historyStreamStarted = true;
+  const stream = new EventSource(historyQueryUrl());
+  stream.addEventListener("put", handleHistoryStreamMessage);
+  stream.addEventListener("patch", handleHistoryStreamMessage);
+  stream.addEventListener("error", () => {
+    historyCloudReady = false;
+    if (elements.historyArchiveStatus) {
+      elements.historyArchiveStatus.textContent = "Cloud archive reconnecting…";
+    }
+  });
+}
+
+async function initializeOnlineHistory() {
+  renderHistory();
+  await loadCloudHistory();
+  startCloudHistoryStream();
+  if (!window.EventSource) setInterval(loadCloudHistory, 60000);
 }
 
 function historyRangeMilliseconds(range) {
@@ -399,11 +605,11 @@ function renderHistory() {
   if (elements.clearHistory) elements.clearHistory.disabled = historyRecords.length === 0;
   if (elements.historyArchiveStatus) {
     elements.historyArchiveStatus.textContent = newest
-      ? `${historyRecords.length} saved · newest ${formatHistoryTimestamp(newest)}`
-      : "Waiting for first reading";
+      ? `${historyRecords.length} ${historyCloudReady ? "shared" : "cached"} · newest ${formatHistoryTimestamp(newest)}`
+      : historyCloudReady ? "Cloud connected · waiting for first reading" : "Connecting to cloud history";
     elements.historyArchiveStatus.title = oldest
-      ? `Stored locally from ${formatHistoryTimestamp(oldest)} to ${formatHistoryTimestamp(newest)}`
-      : "History will begin when a fresh device reading arrives.";
+      ? `${historyCloudReady ? "Shared in Firebase" : "Cached offline"} from ${formatHistoryTimestamp(oldest)} to ${formatHistoryTimestamp(newest)}`
+      : "History begins when a fresh device reading arrives while a dashboard is open.";
   }
 
   elements.historyRangeButtons.forEach((button) => {
@@ -435,12 +641,26 @@ function exportHistoryCsv() {
   URL.revokeObjectURL(url);
 }
 
-function clearHistoryRecords() {
-  if (!historyRecords.length || !window.confirm("Clear all greenhouse history saved in this browser? This cannot be undone.")) return;
-  suppressedHistoryBucket = Math.floor(Date.now() / HISTORY_SAMPLE_INTERVAL_MS);
-  historyRecords = [];
-  localStorage.removeItem(HISTORY_STORAGE_KEY);
-  renderHistory();
+async function clearHistoryRecords() {
+  if (!historyRecords.length || !window.confirm("Clear the shared 30-day greenhouse history from Firebase for every device? This cannot be undone.")) return;
+  elements.clearHistory.disabled = true;
+  elements.historyArchiveStatus.textContent = "Clearing shared cloud history…";
+  try {
+    if (HISTORY_URL) {
+      const response = await fetch(HISTORY_URL, { method: "DELETE", cache: "no-store" });
+      if (!response.ok) throw new Error(`Firebase history delete returned ${response.status}`);
+    }
+    suppressedHistoryBucket = historyBucket(Date.now());
+    historyRecords = [];
+    historyCloudKeys.clear();
+    localStorage.removeItem(HISTORY_STORAGE_KEY);
+    historyCloudReady = true;
+    renderHistory();
+  } catch (error) {
+    console.warn("Unable to clear Firebase history:", error);
+    elements.historyArchiveStatus.textContent = "Could not clear cloud history";
+    elements.clearHistory.disabled = false;
+  }
 }
 
 function isRemoteTelemetryFresh() {
@@ -823,7 +1043,7 @@ function showDashboard() {
   elements.loginScreen.hidden = true;
   elements.appShell.hidden = false;
   lockRemoteControlPanel();
-  renderHistory();
+  initializeOnlineHistory();
   loadData();
   startRealtimeUpdates();
 }
