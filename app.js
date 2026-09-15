@@ -609,7 +609,7 @@ function renderHistory() {
       : historyCloudReady ? "Cloud connected · waiting for first reading" : "Connecting to cloud history";
     elements.historyArchiveStatus.title = oldest
       ? `${historyCloudReady ? "Shared in Firebase" : "Cached offline"} from ${formatHistoryTimestamp(oldest)} to ${formatHistoryTimestamp(newest)}`
-      : "History begins when a fresh device reading arrives while a dashboard is open.";
+      : "History begins after the scheduled web archive saves its first fresh snapshot.";
   }
 
   elements.historyRangeButtons.forEach((button) => {
@@ -908,8 +908,8 @@ function renderDashboard(data) {
     : "Invalid device clock";
   elements.lastSync.textContent = new Date().toLocaleString();
 
-  // Web-only archive: save only fresh, valid device readings. The ESP32 and
-  // Firebase structure remain unchanged.
+  // Keep an immediate browser-side fallback in addition to the scheduled web
+  // archive, which continues saving snapshots while the dashboard is closed.
   if (deviceTimeIsValid && Date.now() - deviceTimeMs <= MARK_READINGS_STALE_AFTER_MS) {
     archiveReading(readings, deviceTimeMs);
   }

@@ -20,6 +20,13 @@ Hosted freshness checks use Firebase's `system.last_update_server` server
 timestamp. The ESP32 `system.last_update_unix` value remains as a compatibility
 fallback, so a bad device clock cannot normally make stale readings look current.
 
+The scheduled `.github/workflows/archive-history.yml` GitHub Actions workflow
+saves one history snapshot every 15 minutes under `/control/history` and removes
+the matching bucket beyond the 30-day retention window. History therefore
+continues to accumulate when no dashboard is open, without changing the deployed
+ESP32. The browser-side writer remains as an immediate fallback while the page
+is open.
+
 The local `Greenhouse_Portal` stores a router SSID and password. When Wi-Fi
 connects, it becomes the primary cloud route and cellular packet data is
 suspended. Local and acknowledged remote commands share the same pump safety

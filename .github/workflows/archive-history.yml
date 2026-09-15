@@ -1,0 +1,37 @@
+name: Archive greenhouse history
+
+on:
+  schedule:
+    # Offset from the busiest top-of-hour period; all GitHub cron times are UTC.
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: greenhouse-history-archive
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Test history conversion
+        run: node --test scripts/archive-history.test.mjs
+
+      - name: Archive latest fresh reading
+        run: node scripts/archive-history.mjs
+        env:
+          FIREBASE_TELEMETRY_URL: https://soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app/greenhouse.json
+          FIREBASE_HISTORY_URL: https://soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app/control/history.json
+          FIREBASE_AUTH_TOKEN: ${{ secrets.FIREBASE_AUTH_TOKEN }}
