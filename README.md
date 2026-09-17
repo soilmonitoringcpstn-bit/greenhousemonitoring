@@ -20,12 +20,32 @@ Hosted freshness checks use Firebase's `system.last_update_server` server
 timestamp. The ESP32 `system.last_update_unix` value remains as a compatibility
 fallback, so a bad device clock cannot normally make stale readings look current.
 
-The scheduled `.github/workflows/archive-history.yml` GitHub Actions workflow
-saves one history snapshot every 15 minutes under `/control/history` and removes
-the matching bucket beyond the 30-day retention window. History therefore
-continues to accumulate when no dashboard is open, without changing the deployed
-ESP32. The browser-side writer remains as an immediate fallback while the page
-is open.
+History snapshots are stored under `/control/history`. The browser saves a
+snapshot when it is open, and the scheduled GitHub Actions workflow is a backup.
+GitHub's schedule can be delayed or skipped, so use the protected Vercel endpoint
+with an external scheduler for reliable 15-minute history on Vercel Hobby. No
+ESP32 firmware change is needed.
+
+### Set up 15-minute history on Vercel Hobby
+
+1. In the Vercel project, add a **Production** environment variable named
+   `CRON_SECRET` with a long random value (at least 32 characters). Redeploy
+   the site so the Vercel Function receives it. Do not put this value in the
+   repository, `app-config.js`, or the browser.
+2. Create a free job at [cron-job.org](https://cron-job.org/) with the URL
+   `https://YOUR-VERCEL-DOMAIN/api/archive-history`, method `GET`, and an
+   execution interval of every 15 minutes. Add a custom header named
+   `Authorization` whose value is `Bearer YOUR_CRON_SECRET` (the same value
+   configured in Vercel).
+3. Run the job once from cron-job.org and check for a JSON response containing
+   `"ok":true`. `"skipped":true` means the ESP32 has not uploaded a fresh
+   reading in the past 15 minutes. A `401` means the secret does not match;
+   a `502` means the Firebase read or write failed. The job should then keep
+   running without visits to the dashboard.
+
+The endpoint saves at most one key per 15-minute bucket and prunes the matching
+bucket past 30 days. The GitHub workflow may still fill occasional buckets, but
+it must not be relied on as the primary timer.
 
 The local `Greenhouse_Portal` stores a router SSID and password. When Wi-Fi
 connects, it becomes the primary cloud route and cellular packet data is
