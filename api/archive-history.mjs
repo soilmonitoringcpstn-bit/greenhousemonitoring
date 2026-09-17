@@ -5,10 +5,17 @@ const FIREBASE_TELEMETRY_URL =
 const FIREBASE_HISTORY_URL =
   "https://soil-monitoring-system-e2d60-default-rtdb.asia-southeast1.firebasedatabase.app/control/history.json";
 
+function jsonResponse(body, status = 200) {
+  return Response.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  });
+}
+
 export async function GET(request) {
   const secret = process.env.CRON_SECRET;
   if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
-    return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
   }
 
   try {
@@ -18,14 +25,14 @@ export async function GET(request) {
       authToken: process.env.FIREBASE_AUTH_TOKEN,
     });
 
-    return Response.json(result.skipped
+    return jsonResponse(result.skipped
       ? { ok: true, skipped: true, reason: result.reason }
       : { ok: true, skipped: false, key: result.key });
   } catch (error) {
     console.error("Unable to archive greenhouse history:", error);
-    return Response.json(
+    return jsonResponse(
       { ok: false, error: "Unable to archive the latest reading" },
-      { status: 502 },
+      502,
     );
   }
 }

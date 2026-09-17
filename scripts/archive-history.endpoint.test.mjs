@@ -10,6 +10,7 @@ test("archive endpoint rejects requests when no secret is configured", async () 
   try {
     const response = await GET(new Request("https://example.test/api/archive-history"));
     assert.equal(response.status, 401);
+    assert.equal(response.headers.get("cache-control"), "no-store");
     assert.equal((await response.json()).ok, false);
   } finally {
     if (previousSecret === undefined) delete process.env.CRON_SECRET;
@@ -62,6 +63,7 @@ test("authorized request archives fresh telemetry", async () => {
     }));
     const result = await response.json();
     assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
     assert.equal(result.ok, true);
     assert.equal(result.skipped, false);
     assert.match(result.key, /^s\d{10}$/);

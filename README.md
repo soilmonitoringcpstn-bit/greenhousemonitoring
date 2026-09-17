@@ -33,7 +33,7 @@ ESP32 firmware change is needed.
    the site so the Vercel Function receives it. Do not put this value in the
    repository, `app-config.js`, or the browser.
 2. Create a free job at [cron-job.org](https://cron-job.org/) with the URL
-   `https://YOUR-VERCEL-DOMAIN/api/archive-history`, method `GET`, and an
+   `https://greenhousemonitoring-sigma.vercel.app/api/archive-history`, method `GET`, and an
    execution interval of every 15 minutes. Add a custom header named
    `Authorization` whose value is `Bearer YOUR_CRON_SECRET` (the same value
    configured in Vercel).
