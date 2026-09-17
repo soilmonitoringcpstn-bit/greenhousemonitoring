@@ -29,6 +29,7 @@ let selectedHistoryRange = "24h";
 let suppressedHistoryBucket = null;
 let historyCloudReady = false;
 let historyStreamStarted = false;
+let historyInitialLoadFinished = false;
 const historyCloudKeys = new Set();
 const historyUploadsPending = new Set();
 
@@ -355,8 +356,9 @@ function archiveReading(readings, timestamp) {
     renderHistory();
   }
 
-  // A failed cloud write is retried on the next live ESP32 update.
-  if (!historyCloudKeys.has(historyKey(record.timestamp))) {
+  // Wait for the initial cloud read before writing. Otherwise opening the
+  // dashboard can overwrite a snapshot that the scheduled archive already saved.
+  if (historyInitialLoadFinished && !historyCloudKeys.has(historyKey(record.timestamp))) {
     uploadHistoryRecord(record);
   }
 }
@@ -472,8 +474,10 @@ function startCloudHistoryStream() {
 }
 
 async function initializeOnlineHistory() {
+  historyInitialLoadFinished = false;
   renderHistory();
   await loadCloudHistory();
+  historyInitialLoadFinished = true;
   startCloudHistoryStream();
   if (!window.EventSource) setInterval(loadCloudHistory, 60000);
 }
